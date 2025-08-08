@@ -1,3 +1,7 @@
+# WebOrdinary
+
+An AI Agent-based CMS SaaS platform. Users subscribe for an intelligent website host that will take natural language instructions to manage their website. Astro-based websites that are statically rendered for prod and scaled down development environments. Claude Code is used in fargate pods to respond to user instructions, with plan confirmation for large requests, and non-prod user-based environment urls for staging before going to production.
+
 ## Architecture Overview
 
 ### AWS Integration
