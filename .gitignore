@@ -16,3 +16,6 @@ temp/
 # Build outputs
 dist/
 *.log
+
+# Local configuration files
+.claude/settings.local.json

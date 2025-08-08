@@ -30,11 +30,8 @@ export class IntegrationTestHarness {
 
   constructor() {
     const awsConfig = {
-      region: TEST_CONFIG.aws.region,
-      credentials: {
-        accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
-        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!
-      }
+      region: TEST_CONFIG.aws.region
+      // Uses default credential chain: env vars, ~/.aws/credentials, IAM roles
     };
 
     this.ecsClient = new ECSClient(awsConfig);

@@ -122,8 +122,7 @@ afterAll(async () => {
  * Individual test setup - runs before each test
  */
 beforeEach(() => {
-  // Set reasonable timeouts for individual tests
-  jest.setTimeout(TEST_CONFIG.timeouts.testTimeout);
+  // Timeout is set in package.json Jest config
 });
 
 /**

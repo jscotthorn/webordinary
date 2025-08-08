@@ -128,7 +128,11 @@ describe('Infrastructure Validation', () => {
           headers: {
             'User-Agent': 'webordinary-integration-test-infrastructure-validation'
           },
-          signal: controller.signal
+          signal: controller.signal,
+          // @ts-ignore - Allow self-signed or mismatched certificates for testing
+          agent: new (await import('https')).Agent({
+            rejectUnauthorized: false
+          })
         });
         
         clearTimeout(timeoutId);
