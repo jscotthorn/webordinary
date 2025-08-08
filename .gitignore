@@ -1,0 +1,18 @@
+# IDE and workspace files
+webordinary.code-workspace
+.vscode/
+
+# Test results
+tests/integration/results/
+tests/integration/dist/
+
+# Node modules at root level (if any)
+node_modules/
+
+# Temporary directories
+tmp/
+temp/
+
+# Build outputs
+dist/
+*.log

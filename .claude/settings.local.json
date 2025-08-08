@@ -1,0 +1,35 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "WebFetch(domain:docs.anthropic.com)",
+      "WebFetch(domain:docs.astro.build)",
+      "Bash(npm run build:*)",
+      "Bash(npx cdk ls:*)",
+      "Bash(aws cloudformation describe-stacks:*)",
+      "Bash(aws acm list-certificates:*)",
+      "Bash(aws ecr describe-repositories:*)",
+      "Bash(aws elbv2 describe-load-balancers:*)",
+      "Bash(aws acm describe-certificate:*)",
+      "Bash(aws elbv2 describe-listeners:*)",
+      "Bash(mkdir:*)",
+      "WebFetch(domain:docs.docker.com)",
+      "Bash(docker build:*)",
+      "Bash(export:*)",
+      "Bash(ECR_URI=\"942734823970.dkr.ecr.us-west-2.amazonaws.com/webordinary/claude-code-astro\")",
+      "Bash(docker tag:*)",
+      "Bash(docker push:*)",
+      "Bash(docker logs:*)",
+      "Bash(docker stop:*)",
+      "Bash(docker rm:*)",
+      "Bash(docker run:*)",
+      "Bash(npm search:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(/Applications/Docker.app/Contents/Resources/bin/docker build -t webordinary/claude-code-astro:task04 .)",
+      "Bash(/Applications/Docker.app/Contents/Resources/bin/docker build --no-cache -t webordinary/claude-code-astro:task04 .)",
+      "Bash(aws ecr describe-images:*)",
+      "Bash(aws cloudformation list-stacks:*)"
+    ],
+    "deny": []
+  }
+}

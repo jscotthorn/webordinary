@@ -1,0 +1,9 @@
+[submodule "amelia-astro"]
+	path = amelia-astro
+	url = git@github.com:jscotthorn/amelia-astro.git
+[submodule "hephaestus"]
+	path = hephaestus
+	url = git@github.com:jscotthorn/hephaestus.git
+[submodule "hermes"]
+	path = hermes
+	url = git@github.com:jscotthorn/hermes.git
