@@ -7,11 +7,12 @@
     "build": "tsc",
     "test": "jest",
     "test:integration": "jest --config=jest.integration.config.js",
-    "test:cold-start": "jest --testNamePattern='Cold Start'",
-    "test:persistence": "jest --testNamePattern='Session Persistence'",
-    "test:concurrency": "jest --testNamePattern='Concurrent Sessions'",
-    "test:routing": "jest --testNamePattern='ALB Routing'",
-    "test:resilience": "jest --testNamePattern='Failure Recovery'",
+    "test:infrastructure": "jest scenarios/infrastructure-validation.test.ts",
+    "test:cold-start": "jest scenarios/01-cold-start-session-flow.test.ts",
+    "test:persistence": "jest scenarios/02-session-persistence.test.ts",
+    "test:concurrent": "jest scenarios/03-concurrent-sessions.test.ts",
+    "test:routing": "jest scenarios/04-alb-routing.test.ts",
+    "test:all": "jest scenarios/*.test.ts",
     "dev": "ts-node src/index.ts"
   },
   "dependencies": {
