@@ -2,9 +2,9 @@
 
 An AI Agent-based CMS SaaS platform. Users subscribe for an intelligent website host that will take natural language instructions to manage their website. Astro-based websites that are statically rendered for prod and scaled down development environments. Claude Code is used in fargate pods to respond to user instructions, with plan confirmation for large requests, and non-prod user-based environment urls for staging before going to production.
 
-## 🏗️ Current Architecture
+## 🏗️ Architecture Evolution
 
-### Production Deployments
+### Current Production (Live)
 
 #### Amelia Stamps (First Client) - Live at amelia.webordinary.com
 ```
@@ -34,22 +34,31 @@ Route53 DNS → https://amelia.webordinary.com
 6. **CloudFront CDN**: Global distribution with caching
 7. **Route53 DNS**: Domain routing and management
 
-#### Container Architecture
-```
-Claude Code Container (Current Status)
-├── ThreadManager: User workspace & git branch isolation ✅
-├── AstroManager: Dev server lifecycle & HMR ✅ (binds to 0.0.0.0:4321)
-├── ClaudeExecutor: Simulated mode (Bedrock in Task 03) ✅
-└── Express API: RESTful endpoints on port 8080 ✅
+### Next-Generation Architecture (Sprint 4-5)
 
-Fargate Service (Fully Operational)
-├── Auto-scaling: 0-3 tasks based on load ✅
-├── EFS Mount: /workspace persistent storage ✅
-├── Ports: 8080 (API) ✅, 4321 (Astro) ✅, 4322 (WebSocket) ✅
-├── Auto-shutdown: 20-minute idle timeout ✅
-├── Health Checks: All passing with 120s grace period ✅
-└── Security Groups: Properly configured for EFS NFS traffic ✅
+#### Per-Container SQS Architecture
 ```
+User Message (Email/SMS/Chat)
+    ↓
+Hermes Service (Session Orchestration)
+    ↓
+SQS Queue (One per User+Project)
+    ↓
+Edit Container (Per User+Project)
+├── Astro Dev Server (port 4321 only)
+├── @nestjs-packages/sqs Message Handler
+├── Claude Code Executor (with interrupts)
+└── Git Workspace (EFS)
+```
+
+#### Key Improvements
+- **Container per User+Project**: Better isolation and resource management
+- **SQS Communication**: Replaces HTTP APIs, enables interrupt handling
+- **Single Queue per Container**: Simplified architecture with one queue set per user+project
+- **Multi-Session Support**: One container handles multiple chat threads via single queue
+- **NestJS Integration**: Clean decorator-based message handling with @nestjs-packages/sqs
+- **Cost Optimization**: Containers scale to zero, SQS costs <$1/month
+- **Simplified Architecture**: No queue discovery, no complex port mapping
 
 ### Configuration
 - Environment variables are loaded via `dotenv` in both projects
@@ -58,7 +67,8 @@ Fargate Service (Fully Operational)
 
 ### Key Dependencies
 - **Hephaestus**: AWS CDK, TypeScript, Jest
-- **Hermes**: NestJS, AWS SDK, LangChain, Jest, ESLint, Prettier
+- **Hermes**: NestJS, AWS SDK, Jest, ESLint, Prettier
+- **Claude Code Container**: Minimal deps, SQS client, Claude Code CLI
 
 ## Testing
 Both projects use Jest for testing:
@@ -107,11 +117,18 @@ We use path-based routing with session IDs for simplicity and clarity:
 4. **Auto-shutdown** → After 5 minutes idle, Fargate scales to 0
 5. **Static Fallback** → All non-session paths serve from S3
 
-#### ALB Listener Rules
+#### ALB Listener Rules (Current)
 ```
-Priority 1: /api/* → Fargate API (port 8080)
+Priority 1: /api/* → Fargate API (port 8080) [To be removed]
 Priority 2: /ws/* → Fargate WebSocket (HMR support)
 Priority 3: /session/* → Fargate Astro dev (port 4321)
+Default: /* → S3 static content (via CloudFront)
+```
+
+#### ALB Listener Rules (New - Sprint 5)
+```
+Priority 1: /session/{chatThreadId}/* → Lambda router → Container:4321
+Priority 2: /_astro/* → WebSocket proxy for HMR
 Default: /* → S3 static content (via CloudFront)
 ```
 
@@ -178,9 +195,9 @@ Hermes manages the complete edit session lifecycle:
 - **Production Ready**: Can be always-on or auto-scale based on email volume
 - **Transition Path**: Manual scaling during alpha, automatic scaling for beta/production
 
-## 💰 Cost Summary
+## 💰 Cost Analysis
 
-### Current Monthly Costs (All Infrastructure)
+### Current Monthly Costs
 - **ECR**: ~$1/month (10 images)
 - **Secrets Manager**: $0.40/month
 - **EFS**: ~$5.25/month (10GB active + 90GB IA)
@@ -189,8 +206,14 @@ Hermes manages the complete edit session lifecycle:
 - **CloudFront**: ~$1-5/month (varies with traffic)
 - **Route53**: $0.50/month (hosted zone)
 - **Fargate (when active)**: ~$0.10/hour
+- **SQS (new)**: <$1/month for thousands of messages
 - **Total Idle**: ~$26-30/month
 - **Total Active (10hrs)**: ~$27-31/month
+
+### Cost Benefits of New Architecture
+- **Scale to Zero**: Containers shut down when idle (save ~$15-20/month per container)
+- **SQS Pricing**: $0.40 per million messages (negligible)
+- **Reduced Complexity**: Lower operational costs
 
 ## 🚀 Quick Start Commands
 
@@ -238,8 +261,28 @@ aws cloudfront get-distribution --id E3FW6R4G95TKO2 --profile personal
 - ✅ Task 04: Git operations enhancement
 - ✅ Task 05: Edit mode tracking and routing
 
-### Sprint 3 (In Progress)
+### Sprint 3 (Complete)
 - ✅ Task 08: Amelia Astro dual deployment (production + editor)
+
+### Sprint 4 (Planned - Weeks 1-2)
+- Task 10: SQS infrastructure setup with per-container queues
+- Task 11: Container SQS polling with @nestjs-packages/sqs integration
+- Task 12: Hermes chat thread ID extraction and session mapping
+- Task 13: Update Hermes to send messages via SQS (single queue per container)
+- Task 14: Container lifecycle management for user+project
+- Task 15: Container queue management and lifecycle
+- Task 16: Integration testing for multi-session architecture
+- Task 17: CloudWatch monitoring and alerting setup
+
+### Sprint 5 (Planned - Weeks 3-4)
+- Task 18: Remove Express API server from container
+- Task 19: Simplify container to Astro + SQS processor only
+- Task 20: Update ALB routing for session-based preview URLs
+- Task 21: Session resumption logic (wake sleeping containers)
+- Task 22: Error handling and retry logic with DLQs
+- Task 23: Performance testing and optimization
+- Task 24: Documentation and runbooks
+- Task 25: Production deployment and gradual rollout
 
 ## 🔮 Future Enhancements
 - Multi-tenant support with isolated workspaces

@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-After reviewing the Webordinary infrastructure, I recommend transitioning from the current monolithic edit container to a **per-session container architecture** with **SQS-based event-driven communication**. This approach aligns with enterprise patterns while solving the current complexity issues around port mapping, service interactions, and container lifecycle management.
+After reviewing the Webordinary infrastructure, I recommend transitioning from the current monolithic edit container to a **per-user-project container architecture** with **SQS-based event-driven communication**. Containers will be shared across multiple chat sessions for the same user+project combination, with interrupt handling for concurrent messages. This approach aligns with enterprise patterns while solving the current complexity issues around port mapping, service interactions, and container lifecycle management.
 
 ## Current Architecture Assessment
 
@@ -23,25 +23,28 @@ After reviewing the Webordinary infrastructure, I recommend transitioning from t
 
 ### Core Design Principles
 
-#### 1. One Container Per Edit Session
-- **Isolation**: Each user gets a dedicated container with their own Astro dev server
-- **Security**: Complete process isolation between different users/clients
-- **Resource Management**: Containers can be sized based on individual project needs
-- **Simplified State**: No need for complex thread management within containers
+#### 1. One Container Per User+Project
+- **Isolation**: Each user+project combination gets a dedicated container
+- **Multi-Session Support**: Container handles multiple chat sessions for same project
+- **Interrupt Handling**: New messages interrupt current processing gracefully
+- **Session Queueing**: Process one session at a time, queue others
 
 #### 2. SQS-Based Event Architecture
 Replace HTTP API calls with asynchronous message passing:
-- **Input Queue**: `webordinary-edit-requests-{sessionId}` - Commands from Hermes
-- **Output Queue**: `webordinary-edit-responses-{sessionId}` - Results back to Hermes
-- **Benefits**: Decoupling, reliability, natural queuing of requests
+- **Input Queue**: `webordinary-input-{clientId}-{projectId}-{userId}` - One per container
+- **Output Queue**: `webordinary-output-{clientId}-{projectId}-{userId}` - One per container
+- **DLQ**: `webordinary-dlq-{clientId}-{projectId}-{userId}` - For failed messages
+- **Simple Mapping**: One queue set per container (1:1 relationship)
+- **Benefits**: Decoupling, reliability, automatic interrupts, simpler architecture
 
 #### 3. Container Responsibilities
 
-**Edit Container (per session):**
-- Astro dev server (port 4321) - serves preview traffic directly
-- SQS message processor - handles edit commands
-- Claude Code executor - performs AI operations
-- Git operations - manages code changes
+**Edit Container (per user+project):**
+- Astro dev server (port 4321) - serves preview traffic for all sessions
+- SQS message handler - processes messages from single queue
+- Claude Code executor - handles interrupts automatically
+- Git operations - manages branches per chat thread
+- NestJS with @ssut/nestjs-sqs for decorator-based handling
 
 **Hermes Service (singleton):**
 - Session orchestration - creates/manages edit sessions
@@ -62,10 +65,11 @@ User Email → SES → SQS → Hermes Service
                             ↓
                     Starts/Wakes Fargate Task
                             ↓
-                    Edit Container (per email thread)
+                    Edit Container (per user+project)
                     ├── Astro Dev Server (4321)
-                    ├── SQS Poller (NestJS)
-                    ├── Claude Code Executor
+                    ├── Multi-Queue SQS Poller
+                    ├── Claude Code Executor (with interrupt)
+                    ├── Session Manager
                     └── Git Workspace (EFS)
                             ↓
                     ALB Routes Traffic
@@ -76,10 +80,11 @@ User Email → SES → SQS → Hermes Service
 
 The system uses email thread IDs as the primary session identifier, ensuring natural conversation continuity:
 
-- **Session ID Format**: `{clientId}-{emailThreadId}` (e.g., `ameliastamps-1a2b3c4d`)
-- **Git Branch**: `email-{threadId}` for clear association
-- **Session Persistence**: Sessions persist across multiple emails in the same thread
-- **Auto-Resume**: Sleeping containers wake when new emails arrive in thread
+- **Container ID**: `{clientId}-{projectId}-{userId}` (e.g., `ameliastamps-website-john`)
+- **Queue Name**: `webordinary-input-{clientId}-{projectId}-{userId}`
+- **Session ID**: `{chatThreadId}` (e.g., `thread-1a2b3c4d`)
+- **Git Branch**: `thread-{chatThreadId}` for each conversation
+- **Interrupt Behavior**: Any new message interrupts current processing
 
 ### Communication Flow
 
@@ -91,8 +96,9 @@ The system uses email thread IDs as the primary session identifier, ensuring nat
    - Creates session-specific SQS queues if needed
 
 2. **Command Processing**:
-   - Hermes sends command to thread-specific input queue
-   - Edit container polls queue
+   - Hermes sends command to container's input queue
+   - NestJS SQS handler receives message asynchronously
+   - New message interrupts any current processing
    - Executes Claude Code operations with thread context
    - Sends results to output queue
    - Hermes receives response and emails user
@@ -107,28 +113,51 @@ The system uses email thread IDs as the primary session identifier, ensuring nat
 
 ### Container Structure
 
-**Simplified Edit Container:**
+**Multi-Session Edit Container:**
 ```typescript
 // Main process: Astro dev server
 npm run dev --host 0.0.0.0 --port 4321
 
-// Background service: SQS processor (NestJS microservice)
-@Module({
-  imports: [
-    SqsModule.register({
-      consumers: [{
-        queueUrl: process.env.INPUT_QUEUE_URL,
-        handleMessage: async (message) => {
-          const result = await claudeExecutor.execute(message.Body);
-          await sqsClient.sendMessage({
-            QueueUrl: process.env.OUTPUT_QUEUE_URL,
-            MessageBody: JSON.stringify(result)
-          });
-        }
-      }]
-    })
-  ]
-})
+// Using @ssut/nestjs-sqs for clean NestJS integration
+import { SqsMessageHandler, SqsConsumerEventHandler } from '@ssut/nestjs-sqs';
+
+@Injectable()
+export class MessageProcessor {
+  private currentProcess: ChildProcess | null = null;
+  private currentSessionId: string | null = null;
+  
+  @SqsMessageHandler(process.env.QUEUE_NAME, false)
+  async handleMessage(message: AWS.SQS.Message) {
+    const body = JSON.parse(message.Body);
+    
+    // Any new message interrupts current work
+    if (this.currentProcess) {
+      await this.interruptCurrentProcess();
+    }
+    
+    // Switch git branch if different session
+    if (body.sessionId !== this.currentSessionId) {
+      await this.switchToSession(body.sessionId);
+    }
+    
+    // Process the new message
+    this.currentSessionId = body.sessionId;
+    this.currentProcess = await this.executeClaudeCode(body);
+  }
+  
+  @SqsConsumerEventHandler('error')
+  async onError(error: Error) {
+    this.logger.error('SQS processing error', error);
+  }
+  
+  async interruptCurrentProcess() {
+    if (this.currentProcess) {
+      this.currentProcess.kill('SIGINT');
+      await this.savePartialProgress();
+      this.currentProcess = null;
+    }
+  }
+}
 ```
 
 ### Queue Design
@@ -150,40 +179,55 @@ npm run dev --host 0.0.0.0 --port 4321
 ### Container Lifecycle
 
 1. **Startup**: 
-   - Clone repository
-   - Checkout session branch
+   - Clone repository for user+project
    - Install dependencies
    - Start Astro dev server
-   - Start SQS poller
+   - Start multi-queue SQS poller
+   - Load existing chat thread branches
 
 2. **Runtime**:
-   - Process SQS messages
-   - Execute Claude operations
-   - Auto-commit changes
-   - Serve preview traffic
+   - NestJS SQS handler processes messages from single queue
+   - Automatically interrupts on new message arrival
+   - Switches git branches based on session ID
+   - Auto-commits changes before switching
+   - Serves preview traffic for all sessions
+   - Uses decorator-based message handling
 
 3. **Shutdown**:
-   - After idle timeout (20 min)
-   - Push uncommitted changes
-   - Delete SQS queues
+   - After idle timeout (20 min) with no messages
+   - Push all uncommitted changes
+   - Preserve session queues (deleted by Hermes)
    - Terminate container
 
-## Migration Path
+## Implementation Timeline
 
-### Phase 1: Decouple Services (Week 1)
-- Separate Astro server from Express API in current container
-- Implement SQS message handler alongside existing HTTP endpoints
-- Test queue-based communication with Hermes
+### Sprint 4: Core Infrastructure & SQS Integration (Weeks 1-2)
 
-### Phase 2: Per-Session Containers (Week 2)
-- Modify CDK to create per-session task definitions
-- Implement session-based queue creation
-- Update ALB routing for session paths
+**Week 1: Foundation**
+- Task 10: SQS infrastructure setup with per-session queues
+- Task 11: Container SQS polling alongside existing HTTP endpoints
+- Task 12: Hermes email thread ID extraction and session mapping
+- Task 13: Update Hermes to send messages via SQS (dual-mode)
 
-### Phase 3: Remove Legacy Code (Week 3)
-- Remove Express API server
-- Simplify container to just Astro + SQS processor
-- Clean up port mapping complexity
+**Week 2: Per-Session Architecture**
+- Task 14: Per-session Fargate task management in CDK
+- Task 15: Dynamic queue creation/deletion per email thread
+- Task 16: Integration testing with both communication modes
+- Task 17: CloudWatch monitoring and alerting setup
+
+### Sprint 5: Migration & Production Hardening (Weeks 3-4)
+
+**Week 1: Simplification**
+- Task 18: Remove Express API server from container
+- Task 19: Simplify container to Astro + SQS processor only
+- Task 20: Update ALB routing for `/session/{emailThreadId}/*` pattern
+- Task 21: Session resumption logic (wake sleeping containers)
+
+**Week 2: Production Ready**
+- Task 22: Error handling and retry logic with DLQs
+- Task 23: Performance testing and optimization
+- Task 24: Documentation and runbooks
+- Task 25: Production deployment and gradual rollout
 
 ## Benefits of Recommended Approach
 
@@ -230,7 +274,7 @@ While Lambda could handle command processing, the long-running nature of Astro d
 
 ## Conclusion
 
-The recommended architecture of **one container per session with SQS-based communication** provides:
+The recommended architecture of **one container per user+project with multi-session SQS-based communication** provides:
 - Clean separation of concerns
 - Enterprise-grade message handling
 - Simplified container responsibilities

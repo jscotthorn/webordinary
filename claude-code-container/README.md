@@ -1,181 +1,204 @@
 # Claude Code Container
 
-A containerized environment for running Claude Code in AWS Fargate with Astro development server support.
+A containerized environment for running Claude Code in AWS Fargate with Astro development server support. Evolving from HTTP API-based to SQS message-based architecture.
 
-## Architecture
+## Architecture Evolution
 
-### Core Components
+### Current Architecture (HTTP-based)
+- Express API server on port 8080
+- Astro dev server on port 4321
+- WebSocket proxy on port 4322
+- Thread-based workspace isolation
 
-#### ThreadManager (`src/thread-manager.ts`)
+### Next-Generation Architecture (Sprint 4-5)
+- **No Express Server**: Removed in Sprint 5
+- **SQS Message Processing**: Replaces HTTP APIs
+- **Multi-Session Support**: One container handles multiple chat threads
+- **Interrupt Handling**: Graceful switching between sessions
+- **Simplified Ports**: Only port 4321 for Astro preview
+
+## Core Components
+
+### ThreadManager (`src/thread-manager.ts`)
 - **Purpose**: Manages user workspaces and Git branch isolation
 - **Features**:
   - Creates isolated workspace directories at `/workspace/{clientId}/{userId}/project`
-  - Manages thread-specific Git branches (`thread-{threadId}`)
+  - Manages thread-specific Git branches (`thread-{chatThreadId}`)
   - Handles GitHub authentication with personal access tokens
   - Configures Git safe directories for EFS-mounted volumes
-  - **Status**: ✅ Fully operational
+- **Status**: ✅ Fully operational
 
-#### AstroManager (`src/astro-manager.ts`)
+### AstroManager (`src/astro-manager.ts`)
 - **Purpose**: Manages Astro development server lifecycle
 - **Features**:
-  - Spawns `npm run dev` process on port 4321
-  - WebSocket proxy on port 4322 for HMR
-  - Health checking with 30-second timeout
+  - Spawns `npx astro dev --host 0.0.0.0 --port 4321`
+  - WebSocket support for HMR
+  - Health checking with timeout
   - Process management (start/stop/restart)
-- **Status**: ⚠️ Process spawns but Astro not serving content
+- **Status**: ✅ Operational
 
-#### ClaudeExecutor (`src/claude-executor.ts`)
+### ClaudeExecutor (`src/claude-executor.ts`)
 - **Purpose**: Executes Claude Code commands
-- **Current**: Simulation mode (returns mock responses)
-- **Future**: Will integrate with AWS Bedrock in Task 03
-- **Status**: ✅ Simulation working
+- **Current**: Direct Claude Code CLI integration
+- **Future**: Interrupt handling for session switching
+- **Status**: ✅ Working with Bedrock
 
-#### Express Server (`src/server.ts`)
-- **Port**: 8080
-- **Endpoints**:
-  - `GET /health` - Health check endpoint
-  - `POST /api/init` - Initialize workspace with repo clone
-  - `POST /api/execute` - Execute Claude instruction
-  - `GET /api/status/:clientId/:userId/:threadId` - Workspace status
-  - `POST /api/git/*` - Git operations (commit, push, pull, etc.)
-  - `POST /api/astro/*` - Astro server control
-  - `POST /api/claude/:sessionId/*` - Hermes integration endpoints
-- **Status**: ✅ All API endpoints operational
+### MultiSessionProcessor (New - Sprint 4)
+- **Purpose**: Poll multiple SQS queues for different sessions
+- **Features**:
+  - Dynamic queue discovery via DynamoDB
+  - Interrupt handling for session switching
+  - Git branch switching per session
+  - Auto-commit on interrupts
+- **Status**: 🚧 In development
 
-## Docker Configuration
-
-### Base Image
-- `node:20-slim` - Lightweight Node.js runtime
-
-### Build Process
-1. Multi-stage build for optimization
-2. TypeScript compilation in builder stage
-3. Production dependencies only in final image
-4. Image size: ~709MB
+## Container Configuration
 
 ### Environment Variables
 ```bash
-# Required
-GITHUB_TOKEN          # GitHub personal access token for repo access
+# Current (HTTP-based)
+GITHUB_TOKEN          # GitHub personal access token
 AUTO_SHUTDOWN_MINUTES # Idle timeout (default: 20)
-
-# Optional
 WORKSPACE_PATH       # EFS mount point (default: /workspace)
 PORT                 # API server port (default: 8080)
-ASTRO_PORT          # Astro dev server port (default: 4321)
-DEFAULT_CLIENT_ID    # Default client for testing
-DEFAULT_USER_ID      # Default user for testing
+
+# New (SQS-based) - Sprint 4-5
+CONTAINER_ID         # {clientId}-{projectId}-{userId}
+CLIENT_ID            # Client identifier
+PROJECT_ID           # Project identifier  
+USER_ID              # User identifier
+# No INPUT_QUEUE_URL - discovers queues dynamically
 ```
 
-## Scripts
+## Migration Path
 
-### entrypoint.sh
-- Validates GitHub token
-- Configures Git credentials
-- Sets up workspace permissions (⚠️ NOTE: Only sets root dir, not recursive)
-- Starts auto-shutdown monitor
-- Launches Express server
+### Sprint 4: Add SQS Support
+1. Keep Express API for backward compatibility
+2. Add SQS polling alongside HTTP endpoints
+3. Implement queue discovery mechanism
+4. Add interrupt handling logic
+5. Test with both communication methods
 
-**Critical**: Do NOT use recursive chown/chmod on EFS mount - it will cause container startup to hang and health checks to fail!
-
-### auto-shutdown.sh
-- Monitors container activity
-- Shuts down after idle timeout
-- Reports status to DynamoDB (when configured)
-- Legacy system - will be replaced with Lambda-based cleanup
-
-## Known Issues
-
-### ⚠️ Astro Host Header Validation
-**Problem**: Astro/Vite blocks requests with host header `edit.amelia.webordinary.com`  
-**Symptoms**:
-- Returns 403 "Blocked request. This host is not allowed"
-- Requires configuration in project's vite.config.js
-
-**Workarounds**:
-1. Configure `server.allowedHosts` in the Astro project's vite.config.js
-2. Use reverse proxy through Express server
-3. Access through session-based paths with proper headers
-
-### ✅ Resolved Issues
-1. **EFS Mounting**: Fixed with proper security group configuration
-2. **GitHub Auth**: Fixed with credential helper and token injection
-3. **Git Ownership**: Fixed with safe.directory configuration
-4. **Port Mapping**: Fixed with explicit target group configuration
-5. **Astro Binding**: Fixed with `npx astro dev --host 0.0.0.0`
-6. **Container Startup Hang**: Fixed by removing recursive chown on EFS mount
-7. **Health Check Failures**: Fixed with proper path, timeout, and grace period
+### Sprint 5: Remove HTTP Dependencies
+1. Remove Express server completely
+2. Remove port 8080 from Dockerfile
+3. Update health checks to use SQS
+4. Simplify container to just Astro + SQS
+5. Update CDK to remove API target groups
 
 ## Deployment
 
-### Build and Push
+### Current Build Process
 ```bash
 ./build.sh
 # Builds Docker image
-# Tags as latest and v1.0.0
+# Tags as latest
 # Pushes to ECR: 942734823970.dkr.ecr.us-west-2.amazonaws.com/webordinary/claude-code-astro
 ```
 
-### Local Testing
+### New Simplified Dockerfile (Sprint 5)
+```dockerfile
+FROM node:18-alpine
+RUN apk add --no-cache git
+RUN npm install -g @anthropic/claude-code
+
+WORKDIR /app
+COPY dist/ ./dist/
+COPY package*.json ./
+
+RUN npm ci --production
+RUN mkdir -p /workspace
+
+EXPOSE 4321
+CMD ["node", "dist/index.js"]
+```
+
+## Testing
+
+### Local Testing (Current)
 ```bash
-docker run -p 8080:8080 \
+docker run -p 8080:8080 -p 4321:4321 \
   -e GITHUB_TOKEN=your_token \
   -v $(pwd)/test-workspace:/workspace \
   webordinary/claude-code-astro:latest
 ```
 
-### Fargate Deployment
-Managed by CDK in `hephaestus/lib/fargate-stack.ts`
+### Local Testing (New Architecture)
 ```bash
-cd ../hephaestus
-npx cdk deploy FargateStack --profile personal
+# Set up local SQS queues (using LocalStack or AWS)
+# Run container with queue URLs
+docker run -p 4321:4321 \
+  -e CONTAINER_ID=test-project-user \
+  -e AWS_ACCESS_KEY_ID=xxx \
+  -e AWS_SECRET_ACCESS_KEY=xxx \
+  webordinary/claude-code-astro:next
 ```
 
-## API Usage Examples
+## Cost Benefits
 
-### Initialize Workspace
-```bash
-curl -X POST https://edit.amelia.webordinary.com/api/init \
-  -H "Content-Type: application/json" \
-  -d '{
-    "clientId": "test-client",
-    "userId": "user1",
-    "threadId": "main",
-    "repoUrl": "https://github.com/jscotthorn/amelia-astro.git"
-  }'
-```
+### Current Architecture
+- Complex port management (8080, 4321, 4322)
+- One container per thread (inefficient)
+- HTTP API overhead
 
-### Execute Command (Simulation Mode)
-```bash
-curl -X POST https://edit.amelia.webordinary.com/api/execute \
-  -H "Content-Type: application/json" \
-  -d '{
-    "instruction": "Update the homepage title",
-    "clientId": "test-client",
-    "userId": "user1",
-    "threadId": "main"
-  }'
-```
+### New Architecture
+- Single port (4321) for Astro only
+- One container per user+project (efficient)
+- SQS costs <$1/month for thousands of messages
+- Better container utilization
+- Simpler operations
 
-## Development Workflow
+## Known Issues & Solutions
 
-1. **Make Changes**: Edit TypeScript source files
-2. **Build Container**: Run `./build.sh`
-3. **Deploy**: Update Fargate service with new image
-4. **Test**: Use curl or Postman to test endpoints
-5. **Monitor**: Check CloudWatch logs for debugging
+### Resolved ✅
+1. **EFS Mounting**: Fixed with security groups
+2. **GitHub Auth**: Fixed with credential helper
+3. **Port Mapping**: Will be simplified in Sprint 5
+4. **Container Startup**: Optimized in Sprint 5
+
+### In Progress 🚧
+1. **Session Switching**: Implementing interrupt handling
+2. **Queue Discovery**: Building DynamoDB integration
+3. **Container Simplification**: Removing Express dependencies
+
+## Monitoring
+
+### Current Metrics
+- API response times
+- Container CPU/memory
+- Astro server health
+
+### New Metrics (Sprint 4-5)
+- Queue processing rate
+- Interrupt frequency
+- Session switch time
+- DLQ message count
+- Container efficiency (sessions per container)
 
 ## Future Enhancements
 
-1. **Bedrock Integration** (Task 03): Replace simulation with real Claude
-2. **Astro Fix**: Debug and resolve dev server startup issue
-3. **DynamoDB Integration**: Workspace status tracking
-4. **Lambda Cleanup**: Replace auto-shutdown with serverless cleanup
-5. **Metrics**: CloudWatch custom metrics for monitoring
+### Sprint 4 Deliverables
+- Multi-queue SQS polling
+- Session interrupt handling
+- Dynamic queue discovery
+- Integration testing
+
+### Sprint 5 Deliverables
+- Remove Express server
+- Simplify container image
+- Optimize resource usage
+- Production deployment
+
+### Post Sprint 5
+- WebContainer support for browser-based editing
+- Multi-region deployment
+- Advanced caching strategies
+- Real-time collaboration features
 
 ## Support
 
 For issues or questions:
 - Check CloudWatch logs: `/ecs/webordinary/edit`
-- Review `INFRASTRUCTURE_STATUS.md` for current state
-- Contact DevOps team for AWS access issues
+- Review task documentation in `/tasks/sprint-4/` and `/tasks/sprint-5/`
+- Monitor SQS queue metrics in CloudWatch
+- Check DynamoDB for session mappings
