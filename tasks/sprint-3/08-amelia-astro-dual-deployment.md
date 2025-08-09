@@ -1,477 +1,225 @@
-# Task 15: Amelia-Astro Dual Deployment Strategy
+# Task 08: Configure Route53 for amelia.webordinary.com
 
 ## Overview
-Configure the `amelia-astro` codebase to serve dual purposes: as the WebOrdinary marketing site (webordinary.com) and as the base template for client editor environments.
+Configure Route53 DNS to serve the astro-amelia site through existing infrastructure:
+1. **Production**: amelia.webordinary.com → Existing CloudFront → S3 bucket
+2. **Editor**: edit.amelia.webordinary.com → Existing ALB → Fargate containers
 
-## Background
-- `amelia-astro` contains the core Astro site structure
-- Need to deploy same codebase for webordinary.com marketing
-- Must serve as template for new client sites in editor
-- Should demonstrate the platform's capabilities
+## Current State (From Sprint 1)
+### Already Deployed Infrastructure
+- ✅ **CloudFront Distribution** (E3FW6R4G95TKO2) 
+  - Domain: dvbgbu22277vf.cloudfront.net
+  - Origin: S3 bucket (amelia.webordinary.com)
+  - GitHub Actions deploys to this S3 bucket
+  - Currently using default CloudFront certificate
+- ✅ **ALB with SSL** (webordinary-edit-alb-916355172.us-west-2.elb.amazonaws.com)
+  - ACM Certificate: *.webordinary.com (ISSUED in us-west-2)
+  - Covers webordinary.com and *.webordinary.com
+  - HTTPS listener configured
+- ✅ **Fargate Infrastructure**
+  - Claude Code container in ECR
+  - Auto-scaling service (0-3 tasks)
+  - EFS persistent storage
+- ✅ **Lambda Build Function** (HephaestusBuildFunction)
+  - Processes GitHub webhooks
+  - Builds astro-amelia and deploys to S3
+  - Invalidates CloudFront cache
 
-## Requirements
+### What Needs Configuration
+- ⚠️ CloudFront: Add amelia.webordinary.com as alternate domain name
+- ⚠️ CloudFront: Need ACM certificate in us-east-1 region
+- ⚠️ Route53: A record for amelia.webordinary.com → CloudFront
+- ⚠️ Route53: A record for edit.amelia.webordinary.com → ALB
 
-### Dual-Purpose Architecture
-1. **WebOrdinary.com Deployment**
-   - Deploy as static marketing/portfolio site
-   - Showcase platform capabilities
-   - Include documentation and pricing
-   - Demo of editing capabilities
+## Implementation Tasks
 
-2. **Editor Template System**
-   - Base template for new client sites
-   - Customizable theme and content structure
-   - Pre-configured for Claude Code editing
-   - Includes example components and patterns
+### Phase 1: ACM Certificate for CloudFront
+Since CloudFront requires certificates in us-east-1:
 
-3. **Template Variants**
-   - Portfolio/Personal (current amelia-astro)
-   - E-commerce (ameliastamps variant)
-   - Blog/Publication
-   - Business/Corporate
-
-4. **Configuration Management**
-   - Environment-based configuration
-   - Template metadata system
-   - Client customization layer
-   - Theme switching capability
-
-## Technical Implementation
-
-### 1. Template Configuration System
-```typescript
-// template.config.ts
-export interface TemplateConfig {
-  id: string;
-  name: string;
-  description: string;
-  category: 'portfolio' | 'ecommerce' | 'blog' | 'business';
-  features: string[];
-  defaultContent: {
-    pages: string[];
-    components: string[];
-    assets: string[];
-  };
-  customizable: {
-    colors: boolean;
-    fonts: boolean;
-    layout: boolean;
-    components: boolean;
-  };
-}
-
-export const ameliaAstroTemplate: TemplateConfig = {
-  id: 'amelia-astro',
-  name: 'Portfolio Template',
-  description: 'Professional portfolio and personal website template',
-  category: 'portfolio',
-  features: [
-    'Responsive design',
-    'Blog integration',
-    'Contact forms',
-    'SEO optimized',
-    'Dark mode support',
-  ],
-  defaultContent: {
-    pages: ['index', 'about', 'portfolio', 'blog', 'contact'],
-    components: ['Header', 'Footer', 'Hero', 'ProjectCard', 'BlogPost'],
-    assets: ['images/hero-bg.jpg', 'fonts/inter.woff2'],
-  },
-  customizable: {
-    colors: true,
-    fonts: true,
-    layout: true,
-    components: true,
-  },
-};
+```bash
+# Request certificate in us-east-1
+aws acm request-certificate \
+  --domain-name "*.webordinary.com" \
+  --validation-method DNS \
+  --region us-east-1 \
+  --profile personal
 ```
 
-### 2. Multi-Site Configuration
-```javascript
-// astro.config.mjs with multi-site support
-import { defineConfig } from 'astro/config';
-import { loadEnv } from 'vite';
+### Phase 2: Update CloudFront Distribution
+1. **Add Alternate Domain Name**
+   - Add: amelia.webordinary.com
+   
+2. **Attach ACM Certificate**
+   - Use the certificate from us-east-1 (once validated)
 
-const { SITE_MODE, SITE_URL, SITE_NAME } = loadEnv(
-  process.env.NODE_ENV,
-  process.cwd(),
-  '',
-);
+### Phase 3: Configure Route53 Records
 
-// Configuration variants
-const siteConfigs = {
-  webordinary: {
-    site: 'https://webordinary.com',
-    base: '/',
-    integrations: [
-      // Marketing site specific integrations
-      analytics(),
-      contactForm(),
-      pricingCalculator(),
-    ],
-  },
-  template: {
-    site: process.env.SITE_URL || 'http://localhost:4321',
-    base: '/',
-    integrations: [
-      // Editor template integrations
-      claudeCodeBridge(),
-      livePreview(),
-      contentEditor(),
-    ],
-  },
-  client: {
-    site: process.env.CLIENT_DOMAIN,
-    base: '/',
-    integrations: [
-      // Client-specific integrations
-      clientAnalytics(),
-      ecommerce(),
-    ],
-  },
-};
+```bash
+# Production site
+1. A Record (ALIAS):
+   - Name: amelia.webordinary.com
+   - Type: A (IPv4)
+   - Alias: Yes
+   - Target: CloudFront distribution (dvbgbu22277vf.cloudfront.net)
 
-export default defineConfig({
-  ...siteConfigs[SITE_MODE || 'template'],
-  output: SITE_MODE === 'webordinary' ? 'static' : 'server',
-  vite: {
-    define: {
-      'import.meta.env.SITE_MODE': JSON.stringify(SITE_MODE),
-      'import.meta.env.SITE_NAME': JSON.stringify(SITE_NAME),
-    },
-  },
-});
+# Editor environment  
+2. A Record (ALIAS):
+   - Name: edit.amelia.webordinary.com
+   - Type: A (IPv4)
+   - Alias: Yes
+   - Target: ALB (webordinary-edit-alb-916355172.us-west-2.elb.amazonaws.com)
 ```
 
-### 3. WebOrdinary.com Content Structure
-```typescript
-// WebOrdinary marketing site pages
-webordinary.com/
-├── src/pages/
-│   ├── index.astro          // Landing page with hero
-│   ├── features.astro       // Platform features
-│   ├── pricing.astro        // Pricing plans
-│   ├── demo.astro          // Interactive demo
-│   ├── docs/
-│   │   ├── getting-started.astro
-│   │   ├── templates.astro
-│   │   └── api.astro
-│   ├── showcase/           // Client examples
-│   │   ├── ameliastamps.astro
-│   │   └── [client].astro
-│   └── auth/
-│       ├── login.astro
-│       └── signup.astro
+### Phase 4: Test & Validate
+```bash
+# After DNS propagation (5-60 minutes)
+
+# Test production site
+curl -I https://amelia.webordinary.com
+# Expected: 200 OK, serving astro site
+
+# Test editor (after scaling up Fargate)
+aws ecs update-service \
+  --cluster webordinary-edit-cluster \
+  --service webordinary-edit-service \
+  --desired-count 1 \
+  --profile personal
+
+curl https://edit.amelia.webordinary.com/api/health
+# Expected: {"status":"healthy",...}
 ```
-
-### 4. Template Initialization Service
-```typescript
-// Template initialization for new clients
-@Injectable()
-export class TemplateInitializerService {
-  async initializeClientSite(params: {
-    clientId: string;
-    templateId: string;
-    customization: ClientCustomization;
-  }): Promise<ClientSite> {
-    // Clone base template
-    const templatePath = await this.cloneTemplate(params.templateId);
-    
-    // Apply client customization
-    await this.applyCustomization(templatePath, params.customization);
-    
-    // Initialize git repository
-    await this.initializeGitRepo(templatePath, params.clientId);
-    
-    // Create GitHub repository
-    const repo = await this.createGitHubRepo(params.clientId);
-    
-    // Push initial commit
-    await this.pushToGitHub(templatePath, repo.url);
-    
-    // Configure environment
-    await this.setupEnvironment({
-      clientId: params.clientId,
-      domain: params.customization.domain,
-      template: params.templateId,
-    });
-    
-    return {
-      clientId: params.clientId,
-      repository: repo.url,
-      previewUrl: `https://edit.webordinary.com/client/${params.clientId}`,
-      customization: params.customization,
-    };
-  }
-  
-  private async applyCustomization(
-    path: string,
-    customization: ClientCustomization,
-  ): Promise<void> {
-    // Update site config
-    const configPath = `${path}/src/config.ts`;
-    const config = await this.readConfig(configPath);
-    
-    config.site = {
-      ...config.site,
-      name: customization.siteName,
-      tagline: customization.tagline,
-      logo: customization.logo,
-    };
-    
-    config.theme = {
-      colors: customization.colors || config.theme.colors,
-      fonts: customization.fonts || config.theme.fonts,
-    };
-    
-    await this.writeConfig(configPath, config);
-    
-    // Update content
-    if (customization.initialContent) {
-      await this.applyInitialContent(path, customization.initialContent);
-    }
-  }
-}
-```
-
-### 5. Dynamic Template Loading
-```astro
----
-// Dynamic template component loading
-import { getTemplate } from '@/lib/templates';
-
-const template = await getTemplate(Astro.params.templateId);
-const Component = await import(template.componentPath);
----
-
-<Component.default {...Astro.props} />
-```
-
-### 6. Template Showcase Page
-```astro
----
-// src/pages/templates/index.astro for webordinary.com
-import Layout from '@/layouts/Layout.astro';
-import TemplateCard from '@/components/TemplateCard.astro';
-import { getAvailableTemplates } from '@/lib/templates';
-
-const templates = await getAvailableTemplates();
----
-
-<Layout title="Website Templates - WebOrdinary">
-  <section class="templates-hero">
-    <h1>Choose Your Perfect Template</h1>
-    <p>Professional templates that adapt to your brand</p>
-  </section>
-  
-  <section class="template-categories">
-    <div class="tabs">
-      <button data-category="all">All Templates</button>
-      <button data-category="portfolio">Portfolio</button>
-      <button data-category="ecommerce">E-commerce</button>
-      <button data-category="blog">Blog</button>
-      <button data-category="business">Business</button>
-    </div>
-    
-    <div class="template-grid">
-      {templates.map(template => (
-        <TemplateCard
-          id={template.id}
-          name={template.name}
-          description={template.description}
-          preview={template.previewUrl}
-          features={template.features}
-          category={template.category}
-        />
-      ))}
-    </div>
-  </section>
-  
-  <section class="template-demo">
-    <h2>Try Before You Buy</h2>
-    <p>Edit any template live with our AI assistant</p>
-    <button class="demo-button" data-template="amelia-astro">
-      Start Demo with Amelia Template
-    </button>
-  </section>
-</Layout>
-
-<style>
-  .template-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
-    gap: 2rem;
-    padding: 2rem;
-  }
-  
-  .tabs {
-    display: flex;
-    gap: 1rem;
-    justify-content: center;
-    margin: 2rem 0;
-  }
-  
-  .tabs button {
-    padding: 0.5rem 1rem;
-    border: 2px solid transparent;
-    background: #f5f5f5;
-    border-radius: 8px;
-    cursor: pointer;
-    transition: all 0.3s;
-  }
-  
-  .tabs button:hover,
-  .tabs button.active {
-    border-color: var(--primary-color);
-    background: white;
-  }
-</style>
-
-<script>
-  // Template filtering
-  document.querySelectorAll('[data-category]').forEach(button => {
-    button.addEventListener('click', (e) => {
-      const category = e.target.dataset.category;
-      filterTemplates(category);
-    });
-  });
-  
-  // Demo initialization
-  document.querySelector('.demo-button').addEventListener('click', async (e) => {
-    const templateId = e.target.dataset.template;
-    const response = await fetch('/api/demo/start', {
-      method: 'POST',
-      body: JSON.stringify({ templateId }),
-    });
-    const { demoUrl } = await response.json();
-    window.open(demoUrl, '_blank');
-  });
-</script>
-```
-
-## Deployment Strategy
-
-### WebOrdinary.com Production
-```yaml
-# GitHub Action for webordinary.com
-name: Deploy WebOrdinary Marketing Site
-
-on:
-  push:
-    branches: [main]
-    paths:
-      - 'amelia-astro/**'
-      - '.github/workflows/deploy-webordinary.yml'
-
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      
-      - name: Setup Node
-        uses: actions/setup-node@v3
-        with:
-          node-version: '20'
-          
-      - name: Install and Build
-        run: |
-          cd amelia-astro
-          npm ci
-          SITE_MODE=webordinary npm run build
-          
-      - name: Deploy to S3
-        run: |
-          aws s3 sync amelia-astro/dist/ s3://webordinary-marketing/ --delete
-          aws cloudfront create-invalidation \
-            --distribution-id $WEBORDINARY_DISTRIBUTION_ID \
-            --paths "/*"
-```
-
-### Template Registry
-```typescript
-// Template registry for client deployments
-const templateRegistry = {
-  'amelia-astro': {
-    repository: 'github.com/webordinary/amelia-astro-template',
-    branch: 'main',
-    setupScript: 'scripts/setup-client.sh',
-    requiredEnvVars: ['SITE_NAME', 'SITE_URL', 'CLIENT_ID'],
-  },
-  'ameliastamps-ecommerce': {
-    repository: 'github.com/webordinary/ecommerce-template',
-    branch: 'main',
-    setupScript: 'scripts/setup-ecommerce.sh',
-    requiredEnvVars: ['SITE_NAME', 'SITE_URL', 'STRIPE_KEY', 'CLIENT_ID'],
-  },
-};
-```
-
-## Implementation Steps
-
-### Phase 1: WebOrdinary.com Setup
-1. Configure amelia-astro for dual-mode operation
-2. Add marketing pages (features, pricing, docs)
-3. Deploy to webordinary.com domain
-4. Set up analytics and monitoring
-
-### Phase 2: Template System
-1. Create template configuration system
-2. Build template initialization service
-3. Implement client customization layer
-4. Test template deployment flow
-
-### Phase 3: Editor Integration
-1. Connect template system to Claude Code
-2. Implement live preview with template
-3. Add template switching capability
-4. Create template marketplace UI
-
-### Phase 4: Client Onboarding
-1. Build client signup flow
-2. Template selection interface
-3. Initial customization wizard
-4. Automatic site provisioning
 
 ## Success Criteria
+- [ ] amelia.webordinary.com serves production Astro site via CloudFront
+- [ ] edit.amelia.webordinary.com reaches Fargate editor environment
+- [ ] SSL/HTTPS working on both domains
+- [ ] GitHub Actions deployments continue working
+- [ ] CloudFront invalidation after deployments
 
-### WebOrdinary.com
-- [ ] Marketing site live at webordinary.com
-- [ ] All marketing pages functional
-- [ ] Demo system working
-- [ ] Documentation complete
-- [ ] Analytics tracking
+## Manual Configuration Steps
 
-### Template System
-- [ ] Template initialization working
-- [ ] Client customization applied
-- [ ] Git repositories created
-- [ ] Preview environments ready
-- [ ] Multiple templates available
+### 1. Request ACM Certificate in us-east-1
+```bash
+# Request wildcard certificate for CloudFront
+aws acm request-certificate \
+  --domain-name "*.webordinary.com" \
+  --validation-method DNS \
+  --region us-east-1 \
+  --profile personal
 
-### Integration
-- [ ] Claude Code can edit templates
-- [ ] Preview updates live
-- [ ] Deployments work
-- [ ] Client isolation maintained
+# Save the CertificateArn from output
+```
 
-## Dependencies
-- Amelia-astro codebase ready
-- WebOrdinary.com domain configured
-- S3/CloudFront for marketing site
-- Template storage system
-- Client provisioning API
+### 2. Validate Certificate via DNS
+```bash
+# Get validation records
+aws acm describe-certificate \
+  --certificate-arn <CERT_ARN> \
+  --region us-east-1 \
+  --profile personal \
+  --query 'Certificate.DomainValidationOptions[0].ResourceRecord'
 
-## Estimated Timeline
-- WebOrdinary.com Setup: 4 hours
-- Template System: 6 hours
-- Editor Integration: 4 hours
-- Client Onboarding: 4 hours
-- **Total: 2-2.5 days**
+# Add CNAME record to Route53 for validation
+```
+
+### 3. Update CloudFront via Console
+1. Go to CloudFront Console
+2. Select Distribution E3FW6R4G95TKO2
+3. Edit General Settings
+4. Alternate domain names: Add `amelia.webordinary.com`
+5. Custom SSL Certificate: Select the ACM cert from us-east-1
+6. Save changes
+
+### 4. Create Route53 Records via Console
+1. Go to Route53 → Hosted zones → webordinary.com
+2. Create A record for amelia:
+   - Name: amelia
+   - Type: A
+   - Alias: Yes
+   - Route traffic to: CloudFront distribution
+   - Select distribution: dvbgbu22277vf.cloudfront.net
+3. Create A record for edit.amelia:
+   - Name: edit.amelia
+   - Type: A
+   - Alias: Yes
+   - Route traffic to: Application Load Balancer
+   - Region: us-west-2
+   - Select ALB: webordinary-edit-alb
+
+## CDK Implementation (Alternative)
+```typescript
+import * as route53 from 'aws-cdk-lib/aws-route53';
+import * as route53Targets from 'aws-cdk-lib/aws-route53-targets';
+
+export class Route53Stack extends cdk.Stack {
+  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+    super(scope, id, props);
+
+    // Lookup hosted zone
+    const hostedZone = route53.HostedZone.fromLookup(this, 'Zone', {
+      domainName: 'webordinary.com'
+    });
+
+    // Import existing CloudFront
+    const distribution = cloudfront.Distribution.fromDistributionAttributes(
+      this, 'ExistingCF', {
+        distributionId: 'E3FW6R4G95TKO2',
+        domainName: 'dvbgbu22277vf.cloudfront.net'
+      }
+    );
+
+    // Create DNS record for amelia.webordinary.com
+    new route53.ARecord(this, 'AmeliaRecord', {
+      zone: hostedZone,
+      recordName: 'amelia',
+      target: route53.RecordTarget.fromAlias(
+        new route53Targets.CloudFrontTarget(distribution)
+      )
+    });
+
+    // Import existing ALB
+    const alb = elbv2.ApplicationLoadBalancer.fromApplicationLoadBalancerAttributes(
+      this, 'ExistingALB', {
+        loadBalancerArn: 'arn:aws:elasticloadbalancing:us-west-2:942734823970:loadbalancer/app/webordinary-edit-alb/...',
+        securityGroupId: 'sg-...' // from ALB
+      }
+    );
+
+    // Create DNS record for edit.amelia.webordinary.com
+    new route53.ARecord(this, 'EditAmeliaRecord', {
+      zone: hostedZone,
+      recordName: 'edit.amelia',
+      target: route53.RecordTarget.fromAlias(
+        new route53Targets.ApplicationLoadBalancerTarget(alb)
+      )
+    });
+  }
+}
+```
+
+## Rollback Plan
+If issues occur:
+1. Delete Route53 A records
+2. Remove alternate domain from CloudFront
+3. GitHub Actions continues to deploy to S3 (unaffected)
+
+## Cost Impact
+- ACM Certificate: Free
+- Route53 hosted zone: Already exists (~$0.50/month)
+- DNS queries: ~$0.40 per million queries
+- No additional CloudFront or S3 costs
+- **Total additional cost**: < $0.01/month
+
+## Timeline
+- ACM certificate request & validation: 5-30 minutes
+- CloudFront update: 5 minutes (propagation 15-30 min)
+- Route53 configuration: 10 minutes
+- Testing: 10 minutes
+- **Total**: ~30-60 minutes including propagation
 
 ## Notes
-- Consider using Astro's content collections for template variants
-- Plan for template versioning strategy
-- Document template customization API
-- Create template development guide
-- Consider white-label options for enterprise
+- The existing *.webordinary.com cert in us-west-2 covers the ALB/editor
+- Need separate cert in us-east-1 for CloudFront
+- Both amelia.webordinary.com and edit.amelia.webordinary.com are covered by *.webordinary.com
+- Future: Consider adding www.amelia.webordinary.com redirect if needed
+- Future: Add staging.amelia.webordinary.com for preview deployments

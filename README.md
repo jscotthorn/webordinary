@@ -2,15 +2,52 @@
 
 An AI Agent-based CMS SaaS platform. Users subscribe for an intelligent website host that will take natural language instructions to manage their website. Astro-based websites that are statically rendered for prod and scaled down development environments. Claude Code is used in fargate pods to respond to user instructions, with plan confirmation for large requests, and non-prod user-based environment urls for staging before going to production.
 
-## Architecture Overview
+## 🏗️ Current Architecture
 
-### AWS Integration
-Both applications integrate with AWS services:
-- **Bedrock**: AI model inference (Hermes)
-- **SQS**: Message queuing for asynchronous processing
-- **S3**: Static asset deployment (Hephaestus)
-- **CloudFront**: CDN invalidation (Hephaestus)
-- **SES**: Email service integration (Hermes)
+### Production Deployments
+
+#### Amelia Stamps (First Client) - Live at amelia.webordinary.com
+```
+GitHub (ameliastamps/amelia-astro)
+    ↓ webhook
+Lambda Build Function (HephaestusBuildFunction)
+    ↓ build & deploy
+S3 Bucket (amelia.webordinary.com)
+    ↓ origin
+CloudFront CDN (E3FW6R4G95TKO2)
+    ↓ HTTPS
+Route53 DNS → https://amelia.webordinary.com
+```
+
+**Live URLs:**
+- Production: https://amelia.webordinary.com
+- Editor: https://edit.amelia.webordinary.com (on-demand)
+
+### Infrastructure Components
+
+#### Core Services (Sprint 1 Complete)
+1. **ECR Repository**: `webordinary/claude-code-astro` - Docker images
+2. **EFS Filesystem**: Persistent workspace storage across sessions
+3. **ALB + SSL**: `*.webordinary.com` certificate, HTTPS routing
+4. **Fargate Cluster**: Auto-scaling containers (0-3 tasks)
+5. **Lambda Build**: GitHub webhook → Astro build → S3 deploy
+6. **CloudFront CDN**: Global distribution with caching
+7. **Route53 DNS**: Domain routing and management
+
+#### Container Architecture
+```
+Claude Code Container (Task 01)
+├── ThreadManager: User workspace & git branch isolation
+├── AstroManager: Dev server lifecycle & HMR
+├── ClaudeExecutor: Bedrock integration (Task 03)
+└── Express API: RESTful endpoints on port 8080
+
+Fargate Service (Task 02)
+├── Auto-scaling: 0-3 tasks based on load
+├── EFS Mount: /workspace persistent storage
+├── Ports: 8080 (API), 4321 (Astro), 4322 (WebSocket)
+└── Auto-shutdown: 5-minute idle timeout
+```
 
 ### Configuration
 - Environment variables are loaded via `dotenv` in both projects
@@ -139,5 +176,73 @@ Hermes manages the complete edit session lifecycle:
 - **Production Ready**: Can be always-on or auto-scale based on email volume
 - **Transition Path**: Manual scaling during alpha, automatic scaling for beta/production
 
-- Email sent with questions/confirmation request
-- Resume on reply using conversation thread ID
+## 💰 Cost Summary
+
+### Current Monthly Costs (All Infrastructure)
+- **ECR**: ~$1/month (10 images)
+- **Secrets Manager**: $0.40/month
+- **EFS**: ~$5.25/month (10GB active + 90GB IA)
+- **ALB**: $18-20/month (shared resource)
+- **Lambda**: ~$0.10/month (build function)
+- **CloudFront**: ~$1-5/month (varies with traffic)
+- **Route53**: $0.50/month (hosted zone)
+- **Fargate (when active)**: ~$0.10/hour
+- **Total Idle**: ~$26-30/month
+- **Total Active (10hrs)**: ~$27-31/month
+
+## 🚀 Quick Start Commands
+
+### Deploy Infrastructure
+```bash
+cd hephaestus
+npm run build
+npx cdk deploy --all --profile personal
+```
+
+### Test Production Site
+```bash
+curl https://amelia.webordinary.com
+```
+
+### Start Editor Session
+```bash
+# Scale up Fargate
+aws ecs update-service \
+  --cluster webordinary-edit-cluster \
+  --service webordinary-edit-service \
+  --desired-count 1 \
+  --profile personal
+
+# Access editor
+open https://edit.amelia.webordinary.com
+```
+
+### Monitor Deployments
+```bash
+# Watch Lambda logs
+aws logs tail /aws/lambda/HephaestusBuildFunction --follow --profile personal
+
+# Check CloudFront status
+aws cloudfront get-distribution --id E3FW6R4G95TKO2 --profile personal
+```
+
+## 📋 Completed Sprints
+
+### Sprint 1 (Complete)
+- ✅ Task 00: ECR, Secrets, EFS, ALB infrastructure
+- ✅ Task 01: Claude Code Docker container
+- ✅ Task 02: Fargate CDK extension
+- ✅ Task 03: Bedrock integration (replaced LangGraph)
+- ✅ Task 04: Git operations enhancement
+- ✅ Task 05: Edit mode tracking and routing
+
+### Sprint 3 (In Progress)
+- ✅ Task 08: Amelia Astro dual deployment (production + editor)
+
+## 🔮 Future Enhancements
+- Multi-tenant support with isolated workspaces
+- Staging environments for preview deployments
+- CloudWatch dashboards and alerting
+- Automated backup and disaster recovery
+- Rate limiting and DDoS protection
+- User authentication for editor access
