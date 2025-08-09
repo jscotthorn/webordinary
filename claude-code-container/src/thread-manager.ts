@@ -109,7 +109,30 @@ export class ThreadManager {
         // Configure git credentials for this session
         await this.setupGitCredentials();
         
-        await execAsync(`git clone ${repoUrl} ${projectPath}`);
+        // For GitHub repos, inject the token directly into the URL
+        let cloneUrl = repoUrl;
+        if (repoUrl.includes('github.com') && process.env.GITHUB_TOKEN) {
+          // Convert SSH to HTTPS if needed
+          if (repoUrl.startsWith('git@github.com:')) {
+            cloneUrl = repoUrl.replace('git@github.com:', 'https://github.com/').replace('.git', '');
+          }
+          // Inject token into HTTPS URL
+          if (cloneUrl.startsWith('https://github.com/')) {
+            cloneUrl = cloneUrl.replace('https://github.com/', `https://${process.env.GITHUB_TOKEN}@github.com/`);
+          }
+        }
+        
+        console.log(`Cloning from: ${cloneUrl.replace(process.env.GITHUB_TOKEN || '', '***')}`);
+        
+        try {
+          await execAsync(`git clone ${cloneUrl} ${projectPath}`);
+          
+          // Mark the cloned directory as safe to avoid ownership issues
+          await execAsync(`git config --global --add safe.directory ${projectPath}`);
+        } catch (error: any) {
+          console.error('Clone failed:', error.message);
+          throw new Error(`Failed to clone repository: ${error.message}`);
+        }
         
         // Install dependencies if package.json exists
         const packageJsonPath = path.join(projectPath, 'package.json');
@@ -125,6 +148,11 @@ export class ThreadManager {
         created: new Date().toISOString(),
         repoUrl
       });
+    }
+    
+    // Ensure the project directory is marked as safe
+    if (await this.pathExists(projectPath)) {
+      await execAsync(`git config --global --add safe.directory ${projectPath}`);
     }
     
     // Switch to thread branch
@@ -282,11 +310,19 @@ export class ThreadManager {
     // Configure git user
     await execAsync(`git config --global user.email "claude@webordinary.com"`);
     await execAsync(`git config --global user.name "Claude Code"`);
-    await execAsync(`git config --global credential.helper store`);
     
-    // Create credentials file
-    const credentialsFile = path.join(process.env.HOME || '/tmp', '.git-credentials');
-    await fs.writeFile(credentialsFile, `https://${process.env.GITHUB_TOKEN}@github.com\n`);
+    // Add safe directory for all workspace directories to avoid ownership issues
+    await execAsync(`git config --global --add safe.directory '*'`);
+    
+    // Set up credentials using the store helper with explicit path
+    const credentialsFile = '/tmp/.git-credentials';
+    await fs.writeFile(credentialsFile, `https://${process.env.GITHUB_TOKEN}@github.com\n`, { mode: 0o600 });
+    
+    // Configure git to use the credentials file
+    await execAsync(`git config --global credential.helper "store --file=${credentialsFile}"`);
+    
+    // Also set the GitHub token as a URL-specific credential for better compatibility
+    await execAsync(`git config --global url."https://${process.env.GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"`);
   }
   
   /**

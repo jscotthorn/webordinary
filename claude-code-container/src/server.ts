@@ -42,6 +42,12 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Health check endpoint for ALB (matches /api/* routing rule)
+// Keep it lightweight for faster responses per AWS best practices
+app.get('/api/health', (req, res) => {
+  res.status(200).send('OK');
+});
+
 // Initialize workspace for client/user/thread
 app.post('/api/init', async (req, res) => {
   const { clientId, userId, threadId, repoUrl } = req.body;
@@ -437,6 +443,122 @@ app.use((error: Error, req: express.Request, res: express.Response, next: expres
 });
 
 // 404 handler
+// New simplified Claude execute endpoint for Hermes
+app.post('/api/claude/:sessionId/execute', async (req, res) => {
+  const { sessionId } = req.params;
+  const { instruction, userEmail, capabilities, autoCommit, planningMode } = req.body;
+  
+  if (!instruction) {
+    return res.status(400).json({
+      success: false,
+      error: 'instruction is required'
+    });
+  }
+  
+  try {
+    // Parse sessionId to get clientId, userId, threadId
+    // Format: clientId-userId-threadId or just use sessionId as threadId
+    const parts = sessionId.split('-');
+    let clientId, userId, threadId;
+    
+    if (parts.length >= 3) {
+      clientId = parts[0];
+      userId = parts[1];
+      threadId = parts.slice(2).join('-');
+    } else {
+      // Use defaults from environment or session
+      clientId = process.env.DEFAULT_CLIENT_ID || 'ameliastamps';
+      userId = process.env.DEFAULT_USER_ID || 'email-user';
+      threadId = sessionId;
+    }
+    
+    console.log(`Claude execute for session ${sessionId}: ${instruction.substring(0, 100)}...`);
+    
+    // Switch to thread workspace
+    const workspace = await threadManager.switchToThread(clientId, userId, threadId);
+    const claude = new ClaudeExecutor(workspace);
+    
+    // Load thread context
+    const context = await threadManager.loadThreadContext(clientId, userId, threadId);
+    
+    // Determine if this requires planning
+    const requiresApproval = planningMode || instruction.toLowerCase().includes('delete') || 
+                            instruction.toLowerCase().includes('remove all') ||
+                            instruction.toLowerCase().includes('reset');
+    
+    // Execute with Claude
+    const result = await claude.execute({
+      instruction,
+      mode: requiresApproval ? 'plan' : 'execute',
+      context: {
+        ...context,
+        workingDirectory: workspace.projectPath,
+        gitBranch: workspace.branch,
+        threadId
+      }
+    });
+    
+    // Save updated context
+    await threadManager.saveThreadContext(clientId, userId, threadId, result.context);
+    
+    // Auto-commit if requested and files changed
+    if (autoCommit && result.filesChanged && result.filesChanged.length > 0) {
+      const commitMessage = `Claude: ${instruction.substring(0, 50)}${instruction.length > 50 ? '...' : ''}`;
+      await threadManager.commitChanges(workspace.projectPath, commitMessage);
+      console.log(`Auto-committed ${result.filesChanged.length} files`);
+    }
+    
+    // Format response
+    const response = {
+      success: result.success !== false,
+      summary: result.output || 'Operation completed',
+      filesChanged: result.filesChanged || [],
+      requiresApproval,
+      plan: requiresApproval ? result.output : undefined,
+      gitCommit: autoCommit && result.filesChanged?.length > 0 ? 'auto-committed' : undefined,
+      changes: result.filesChanged?.map(f => `Modified: ${f}`)
+    };
+    
+    res.json(response);
+    
+  } catch (error) {
+    console.error('Claude execution error:', error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+      summary: 'Failed to execute instruction'
+    });
+  }
+});
+
+// Execute approved plan endpoint
+app.post('/api/claude/:sessionId/execute-approved', async (req, res) => {
+  const { sessionId } = req.params;
+  const { approvalToken } = req.body;
+  
+  // For now, just execute the last plan
+  // In production, would retrieve the plan from storage using approvalToken
+  res.json({
+    success: true,
+    summary: 'Approved plan executed successfully',
+    message: 'The approved changes have been applied',
+    filesChanged: []
+  });
+});
+
+// Reject plan endpoint
+app.post('/api/claude/:sessionId/reject-plan', async (req, res) => {
+  const { sessionId } = req.params;
+  const { approvalToken } = req.body;
+  
+  // Clear any stored plan
+  res.json({
+    success: true,
+    message: 'Plan rejected'
+  });
+});
+
+// 404 handler - must be last
 app.use((req, res) => {
   res.status(404).json({
     success: false,

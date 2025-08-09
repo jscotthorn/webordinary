@@ -52,9 +52,9 @@ if [ ! -d "/workspace" ]; then
   exit 1
 fi
 
-# Set proper permissions for EFS (try to fix ownership, ignore errors if not permitted)
+# Set proper permissions for EFS (only set root directory, not recursive)
+# Recursive chown on EFS can take forever and cause health check failures
 echo "Setting up workspace permissions..."
-chown -R appuser:appuser /workspace 2>/dev/null || true
 chmod 755 /workspace 2>/dev/null || true
 
 # Create client directory if specified

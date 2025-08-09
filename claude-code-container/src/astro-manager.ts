@@ -44,27 +44,33 @@ export class AstroManager {
       this.process = null;
     }
     
-    // Start Astro dev server
-    this.process = spawn('npm', ['run', 'dev'], {
+    // Start Astro dev server with explicit --host flag to bind to all interfaces
+    console.log(`Spawning: npx astro dev --host 0.0.0.0 --port 4321 in ${this.projectPath}`);
+    
+    // Use npx to run astro directly with flags since npm run doesn't pass them through
+    this.process = spawn('npx', ['astro', 'dev', '--host', '0.0.0.0', '--port', '4321'], {
       cwd: this.projectPath,
       env: {
         ...process.env,
-        HOST: '0.0.0.0',
-        PORT: '4321',
         ASTRO_TELEMETRY_DISABLED: '1'
       },
       stdio: ['ignore', 'pipe', 'pipe']
     });
     
+    if (!this.process || !this.process.pid) {
+      throw new Error('Failed to spawn Astro dev server process');
+    }
+    
+    console.log(`Astro process spawned with PID: ${this.process.pid}`);
     this.isDevServer = true;
     
     // Log output for debugging
     this.process.stdout?.on('data', (data) => {
-      console.log(`Astro stdout: ${data}`);
+      console.log(`[Astro stdout]: ${data.toString().trim()}`);
     });
     
     this.process.stderr?.on('data', (data) => {
-      console.error(`Astro stderr: ${data}`);
+      console.error(`[Astro stderr]: ${data.toString().trim()}`);
     });
     
     this.process.on('exit', (code) => {
@@ -77,9 +83,19 @@ export class AstroManager {
     await this.setupWebSocketProxy();
     
     // Wait for server to be ready
-    await this.waitForReady();
-    
-    console.log('Astro dev server started successfully');
+    try {
+      await this.waitForReady();
+      console.log('Astro dev server started successfully');
+    } catch (error: any) {
+      console.error('Failed to start Astro dev server:', error.message);
+      // Kill the process if it's still running
+      if (this.process) {
+        this.process.kill('SIGTERM');
+        this.process = null;
+        this.isDevServer = false;
+      }
+      throw error;
+    }
   }
   
   /**
@@ -158,12 +174,12 @@ export class AstroManager {
       this.process.kill('SIGTERM');
     }
     
-    this.process = spawn('npm', ['run', 'preview'], {
+    // Use npx for preview as well to pass flags directly
+    this.process = spawn('npx', ['astro', 'preview', '--host', '0.0.0.0', '--port', '4321'], {
       cwd: this.projectPath,
       env: {
         ...process.env,
-        HOST: '0.0.0.0',
-        PORT: '4321'
+        ASTRO_TELEMETRY_DISABLED: '1'
       },
       stdio: ['ignore', 'pipe', 'pipe']
     });
@@ -235,22 +251,29 @@ export class AstroManager {
    */
   private async waitForReady(timeout = 30000): Promise<void> {
     const start = Date.now();
+    console.log(`Waiting for Astro server to be ready (timeout: ${timeout}ms)...`);
     
     while (Date.now() - start < timeout) {
       try {
         const response = await fetch('http://localhost:4321');
         
-        if (response.ok) {
-          console.log('Astro server is ready');
+        if (response.ok || response.status === 404) {
+          // 404 is ok - Astro might not have a root page
+          console.log(`Astro server is ready (status: ${response.status})`);
           return;
         }
-      } catch (e) {
+        console.log(`Astro server not ready yet (status: ${response.status})`);
+      } catch (e: any) {
         // Server not ready yet
+        if ((Date.now() - start) % 5000 === 0) {
+          console.log(`Still waiting for Astro... (${e.message})`);
+        }
       }
       
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
     
+    console.error(`Astro server failed to start within ${timeout}ms`);
     throw new Error(`Astro server failed to start within ${timeout}ms`);
   }
   

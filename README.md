@@ -36,17 +36,19 @@ Route53 DNS → https://amelia.webordinary.com
 
 #### Container Architecture
 ```
-Claude Code Container (Task 01)
-├── ThreadManager: User workspace & git branch isolation
-├── AstroManager: Dev server lifecycle & HMR
-├── ClaudeExecutor: Bedrock integration (Task 03)
-└── Express API: RESTful endpoints on port 8080
+Claude Code Container (Current Status)
+├── ThreadManager: User workspace & git branch isolation ✅
+├── AstroManager: Dev server lifecycle & HMR ✅ (binds to 0.0.0.0:4321)
+├── ClaudeExecutor: Simulated mode (Bedrock in Task 03) ✅
+└── Express API: RESTful endpoints on port 8080 ✅
 
-Fargate Service (Task 02)
-├── Auto-scaling: 0-3 tasks based on load
-├── EFS Mount: /workspace persistent storage
-├── Ports: 8080 (API), 4321 (Astro), 4322 (WebSocket)
-└── Auto-shutdown: 5-minute idle timeout
+Fargate Service (Fully Operational)
+├── Auto-scaling: 0-3 tasks based on load ✅
+├── EFS Mount: /workspace persistent storage ✅
+├── Ports: 8080 (API) ✅, 4321 (Astro) ✅, 4322 (WebSocket) ✅
+├── Auto-shutdown: 20-minute idle timeout ✅
+├── Health Checks: All passing with 120s grace period ✅
+└── Security Groups: Properly configured for EFS NFS traffic ✅
 ```
 
 ### Configuration
@@ -64,9 +66,9 @@ Both projects use Jest for testing:
 - E2E tests in Hermes use `jest-e2e.json` configuration
 - Coverage reports are generated in `/coverage` directory
 
-## Hermes Agent Architecture
+## Hermes Agent Architecture (Simplified in Sprint 3)
 
-The Hermes agent uses LangGraphJS to implement a plan-and-execute pattern with human-in-the-loop capabilities:
+The Hermes agent has been simplified to use direct Claude Code integration instead of LangChain/LangGraph:
 
 ### State Management
 - **SiteState**: Tracks email, messages, plan steps, execution state, and conversation thread ID
