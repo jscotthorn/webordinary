@@ -34,22 +34,36 @@ Route53 DNS → https://amelia.webordinary.com
 6. **CloudFront CDN**: Global distribution with caching
 7. **Route53 DNS**: Domain routing and management
 
-### Next-Generation Architecture (Sprint 4-5)
+### 🚀 Multi-Session SQS Architecture (Sprint 4 - 85% Complete)
 
-#### Per-Container SQS Architecture
+#### **STATUS: DEPLOYED & TESTING** ✅
+
 ```
 User Message (Email/SMS/Chat)
     ↓
 Hermes Service (Session Orchestration)
+    ↓ SQS Message
+SQS Queue Set (One per User+Project Container)
+├── webordinary-input-{clientId}-{projectId}-{userId}
+├── webordinary-output-{clientId}-{projectId}-{userId} 
+└── webordinary-dlq-{clientId}-{projectId}-{userId}
     ↓
-SQS Queue (One per User+Project)
-    ↓
-Edit Container (Per User+Project)
-├── Astro Dev Server (port 4321 only)
-├── @nestjs-packages/sqs Message Handler
-├── Claude Code Executor (with interrupts)
+Edit Container (Per User+Project, Multi-Session)
+├── NestJS SQS Message Processor (@ssut/nestjs-sqs)
+├── Astro Dev Server (port 4321)
+├── Claude Code Executor (with automatic interrupts)
+├── Git Branch Manager (thread-{threadId} per conversation)
+└── Session Manager (multiple chat threads per container)
 └── Git Workspace (EFS)
 ```
+
+#### 📊 Sprint 4 Deployment Status
+- **✅ SQS Infrastructure**: DynamoDB tables, IAM roles, CloudWatch monitoring deployed
+- **✅ Container Images**: NestJS SQS-enabled containers built and pushed to ECR  
+- **✅ Thread Management**: Cross-channel continuity and session mapping implemented
+- **✅ Integration Tests**: 8/11 tests passing with real AWS infrastructure
+- **⚠️ Container Lifecycle**: CDK conflicts with existing SessionStack (minor fix needed)
+- **🔄 Final Testing**: End-to-end email processing and load testing in progress
 
 #### Key Improvements
 - **Container per User+Project**: Better isolation and resource management

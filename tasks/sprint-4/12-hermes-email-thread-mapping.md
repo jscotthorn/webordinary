@@ -1,7 +1,7 @@
 # Task 12: Hermes Chat Thread ID Extraction and Session Mapping
 
 ## Objective
-Update Hermes to extract thread IDs from incoming messages (email, SMS, chat) and map them to edit sessions consistently.
+Update Hermes to extract thread IDs from incoming messages (email for now) and map them to edit sessions consistently.
 
 ## Requirements
 
@@ -13,7 +13,7 @@ Update Hermes to extract thread IDs from incoming messages (email, SMS, chat) an
    - `References`: Chain of message IDs in thread
    - `Thread-Index`: Microsoft Exchange thread identifier
 
-5. **Session ID Format**:
+2. **Session ID Format**:
    - Pattern: `{clientId}-{messageId}`
    - Example: `ameliastamps-a1b2c3d4`
    - Git branch: `thread-{messageId}`

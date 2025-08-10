@@ -1,0 +1,65 @@
+# Multi-stage Dockerfile for Claude Code Container with SQS support
+FROM node:20-alpine AS builder
+
+# Install build dependencies
+RUN apk add --no-cache git python3 make g++
+
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies
+RUN npm ci
+
+# Copy source code
+COPY tsconfig.json ./
+COPY src ./src
+
+# Build TypeScript
+RUN npm run build
+
+# Production stage
+FROM node:20-alpine
+
+# Install runtime dependencies
+RUN apk add --no-cache \
+    git \
+    openssh-client \
+    curl \
+    bash \
+    && npm install -g claude-code@latest
+
+# Create app user
+RUN addgroup -g 1001 appuser && \
+    adduser -D -u 1001 -G appuser appuser
+
+WORKDIR /app
+
+# Copy built application
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package*.json ./
+
+# Create workspace directory
+RUN mkdir -p /workspace && \
+    chown -R appuser:appuser /workspace /app
+
+# Switch to non-root user
+USER appuser
+
+# Set environment variables
+ENV NODE_ENV=production \
+    WORKSPACE_PATH=/workspace \
+    ASTRO_PORT=4321 \
+    PREVIEW_DOMAIN=preview.webordinary.com
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:${ASTRO_PORT}/ || exit 1
+
+# Expose Astro dev server port
+EXPOSE 4321
+
+# Start the NestJS application with SQS polling
+CMD ["node", "dist/main.js"]
