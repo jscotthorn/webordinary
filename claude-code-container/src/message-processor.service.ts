@@ -146,9 +146,9 @@ export class MessageProcessor {
         this.logger.log('S3 sync was interrupted, partial deployment may be available');
       }
       
-      // Push any committed changes
+      // Push any committed changes with conflict handling
       if (process.env.GIT_PUSH_ENABLED !== 'false') {
-        await this.gitService.pushWithRetry();
+        await this.gitService.safePush();
       }
       
       this.currentProcess = null;
@@ -169,12 +169,20 @@ export class MessageProcessor {
       await this.gitService.commitWithBody(commitMessage);
     }
     
-    // Switch to session branch
-    try {
-      await this.gitService.checkoutBranch(branch);
-    } catch {
-      // Create branch if it doesn't exist
-      await this.gitService.createBranch(branch);
+    // Use safe branch switch with stash support
+    const switchSuccess = await this.gitService.safeBranchSwitch(branch);
+    
+    if (!switchSuccess) {
+      // Fall back to recovery and force checkout
+      this.logger.warn('Safe switch failed, attempting recovery...');
+      try {
+        await this.gitService.recoverRepository();
+        // Try again after recovery
+        await this.gitService.checkoutBranch(branch);
+      } catch {
+        // Create branch if it doesn't exist
+        await this.gitService.createBranch(branch);
+      }
     }
     
     this.currentSessionId = sessionId;
@@ -298,21 +306,25 @@ export class MessageProcessor {
         this.logger.log('Step 4/5: Deploying to S3...');
         result.deploySuccess = await this.syncToS3WithInterrupt(message.clientId);
         
-        // Step 5: Push commits to GitHub
+        // Step 5: Push commits to GitHub with conflict handling
         if (process.env.GIT_PUSH_ENABLED !== 'false') {
           this.logger.log('Step 5/5: Pushing to GitHub...');
-          const pushSuccess = await this.gitService.pushWithRetry();
+          const pushSuccess = await this.gitService.safePush();
           if (!pushSuccess) {
-            this.logger.warn('Failed to push to GitHub, but continuing');
+            this.logger.warn('Failed to push to GitHub after conflict resolution, but continuing');
+            // Could queue for later retry or notify user
+          } else {
+            this.logger.log('Successfully pushed changes to GitHub');
           }
         } else {
           this.logger.log('Step 5/5: Git push disabled, skipping');
         }
       } else {
-        this.logger.warn('Build failed, skipping deployment and push');
+        this.logger.warn('Build failed, skipping deployment');
         // Still try to push commits even if build failed
         if (process.env.GIT_PUSH_ENABLED !== 'false') {
-          await this.gitService.pushWithRetry();
+          this.logger.log('Attempting to push commits despite build failure...');
+          await this.gitService.safePush();
         }
       }
       
@@ -322,7 +334,8 @@ export class MessageProcessor {
       
       // Try to push whatever we have committed
       if (process.env.GIT_PUSH_ENABLED !== 'false') {
-        await this.gitService.pushWithRetry();
+        this.logger.log('Attempting to push any committed changes...');
+        await this.gitService.safePush();
       }
       
       throw error;

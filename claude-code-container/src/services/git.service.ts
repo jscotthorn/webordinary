@@ -354,4 +354,218 @@ export class GitService {
     }
   }
 
+  /**
+   * Safely switch branches with stash support
+   */
+  async safeBranchSwitch(targetBranch: string): Promise<boolean> {
+    try {
+      // Check for uncommitted changes
+      const hasChanges = await this.hasUncommittedChanges();
+      
+      if (hasChanges) {
+        this.logger.log('Uncommitted changes detected, stashing...');
+        
+        // Stash changes with descriptive message
+        const stashMessage = `Auto-stash before switching to ${targetBranch}`;
+        await execAsync(`git stash push -m "${stashMessage}"`, {
+          cwd: this.workspacePath
+        });
+      }
+      
+      // Try to checkout branch
+      try {
+        await execAsync(`git checkout ${targetBranch}`, {
+          cwd: this.workspacePath
+        });
+      } catch (checkoutError: any) {
+        // Branch doesn't exist, create it
+        if (checkoutError.message.includes('did not match any')) {
+          await execAsync(`git checkout -b ${targetBranch}`, {
+            cwd: this.workspacePath
+          });
+        } else {
+          throw checkoutError;
+        }
+      }
+      
+      // Apply stash if we had changes
+      if (hasChanges) {
+        try {
+          this.logger.log('Applying stashed changes...');
+          await execAsync('git stash pop', {
+            cwd: this.workspacePath
+          });
+        } catch (stashError: any) {
+          this.logger.warn('Could not apply stash cleanly, keeping in stash list');
+          // Changes remain in stash for manual resolution
+        }
+      }
+      
+      return true;
+    } catch (error: any) {
+      this.logger.error(`Failed to switch branch: ${error.message}`);
+      return false;
+    }
+  }
+
+  /**
+   * Automatically resolve merge conflicts
+   */
+  async resolveConflictsAutomatically(): Promise<boolean> {
+    try {
+      // Check if we're in a conflict state
+      const { stdout: status } = await execAsync('git status --porcelain', {
+        cwd: this.workspacePath
+      });
+      
+      const conflictFiles = status
+        .split('\n')
+        .filter(line => line.startsWith('UU '))
+        .map(line => line.substring(3));
+      
+      if (conflictFiles.length === 0) {
+        return true; // No conflicts
+      }
+      
+      this.logger.warn(`Found ${conflictFiles.length} conflicted files`);
+      
+      // Strategy: Accept current branch version (--ours)
+      for (const file of conflictFiles) {
+        await execAsync(`git checkout --ours "${file}"`, {
+          cwd: this.workspacePath
+        });
+        await execAsync(`git add "${file}"`, {
+          cwd: this.workspacePath
+        });
+      }
+      
+      // Commit the resolution
+      await execAsync('git commit -m "Auto-resolved conflicts (kept local changes)"', {
+        cwd: this.workspacePath
+      });
+      
+      this.logger.log('Conflicts auto-resolved using local version');
+      return true;
+    } catch (error: any) {
+      this.logger.error(`Failed to resolve conflicts: ${error.message}`);
+      return false;
+    }
+  }
+
+  /**
+   * Push with automatic conflict resolution
+   */
+  async safePush(branch?: string): Promise<boolean> {
+    try {
+      const currentBranch = branch || await this.getCurrentBranch();
+      
+      // First attempt direct push
+      try {
+        await execAsync(`git push origin ${currentBranch}`, {
+          cwd: this.workspacePath
+        });
+        this.logger.log(`Pushed branch ${currentBranch} successfully`);
+        return true;
+      } catch (pushError: any) {
+        if (pushError.message.includes('non-fast-forward')) {
+          // Remote has changes we don't have
+          return await this.handleNonFastForward(currentBranch);
+        }
+        throw pushError;
+      }
+    } catch (error: any) {
+      this.logger.error(`Safe push failed: ${error.message}`);
+      return false;
+    }
+  }
+
+  /**
+   * Handle non-fast-forward push errors
+   */
+  private async handleNonFastForward(branch: string): Promise<boolean> {
+    this.logger.log('Remote has changes, attempting to merge...');
+    
+    try {
+      // Pull with rebase to keep history clean
+      await execAsync(`git pull --rebase origin ${branch}`, {
+        cwd: this.workspacePath
+      });
+      
+      // Try push again
+      await execAsync(`git push origin ${branch}`, {
+        cwd: this.workspacePath
+      });
+      
+      this.logger.log('Successfully pushed after rebase');
+      return true;
+    } catch (rebaseError: any) {
+      if (rebaseError.message.includes('conflict')) {
+        // Abort rebase and try merge instead
+        await execAsync('git rebase --abort', {
+          cwd: this.workspacePath
+        }).catch(() => {}); // Ignore abort errors
+        
+        // Try merge strategy
+        try {
+          await execAsync(`git pull origin ${branch}`, {
+            cwd: this.workspacePath
+          });
+          
+          // Resolve any conflicts
+          await this.resolveConflictsAutomatically();
+          
+          // Push merged result
+          await execAsync(`git push origin ${branch}`, {
+            cwd: this.workspacePath
+          });
+          
+          this.logger.log('Successfully pushed after merge');
+          return true;
+        } catch (mergeError: any) {
+          this.logger.error('Could not automatically resolve push conflict');
+          return false;
+        }
+      }
+      
+      return false;
+    }
+  }
+
+  /**
+   * Recover repository from bad state
+   */
+  async recoverRepository(): Promise<void> {
+    this.logger.log('Attempting repository recovery...');
+    
+    try {
+      // Check if we're in the middle of a merge/rebase
+      const { stdout: gitDir } = await execAsync('git rev-parse --git-dir', {
+        cwd: this.workspacePath
+      });
+      
+      // Abort any in-progress operations
+      await execAsync('git merge --abort', { cwd: this.workspacePath }).catch(() => {});
+      await execAsync('git rebase --abort', { cwd: this.workspacePath }).catch(() => {});
+      await execAsync('git cherry-pick --abort', { cwd: this.workspacePath }).catch(() => {});
+      
+      // Reset to clean state if needed
+      const { stdout: status } = await execAsync('git status --porcelain', {
+        cwd: this.workspacePath
+      });
+      
+      if (status.includes('UU ')) {
+        // Unresolved conflicts, reset to HEAD
+        await execAsync('git reset --hard HEAD', {
+          cwd: this.workspacePath
+        });
+        this.logger.warn('Reset repository to HEAD due to conflicts');
+      }
+      
+      this.logger.log('Repository recovered');
+    } catch (error: any) {
+      this.logger.error(`Recovery failed: ${error.message}`);
+      throw error;
+    }
+  }
+
 }
