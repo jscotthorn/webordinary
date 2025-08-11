@@ -12,6 +12,7 @@
     "test:persistence": "jest scenarios/02-session-persistence.test.ts",
     "test:concurrent": "jest scenarios/03-concurrent-sessions.test.ts",
     "test:routing": "jest scenarios/04-alb-routing.test.ts",
+    "test:resumption": "jest scenarios/05-session-resumption.test.ts",
     "test:all": "jest scenarios/*.test.ts",
     "dev": "ts-node src/index.ts"
   },

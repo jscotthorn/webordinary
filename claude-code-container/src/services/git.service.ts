@@ -84,13 +84,27 @@ export class GitService {
     }
   }
 
-  async push(branch?: string, force: boolean = false): Promise<void> {
+  async push(branchOrWorkspacePath?: string, branchIfWorkspace?: string, force: boolean = false): Promise<void> {
     try {
-      const currentBranch = branch || await this.getCurrentBranch();
+      let cwd = this.workspacePath;
+      let currentBranch: string;
+      
+      // Handle overloaded parameters
+      if (branchOrWorkspacePath && branchOrWorkspacePath.includes('/')) {
+        // First parameter is workspace path
+        cwd = branchOrWorkspacePath;
+        currentBranch = branchIfWorkspace || await this.getCurrentBranch();
+      } else {
+        // First parameter is branch name (or undefined)
+        currentBranch = branchOrWorkspacePath || await this.getCurrentBranch();
+        // Handle the case where second param is force boolean (legacy signature)
+        if (typeof branchIfWorkspace === 'boolean') {
+          force = branchIfWorkspace;
+        }
+      }
+      
       const forceFlag = force ? '--force' : '';
-      await execAsync(`git push origin ${currentBranch} ${forceFlag}`, {
-        cwd: this.workspacePath,
-      });
+      await execAsync(`git push origin ${currentBranch} ${forceFlag}`, { cwd });
       this.logger.log(`Pushed branch ${currentBranch} to remote`);
     } catch (error: any) {
       this.logger.error(`Failed to push: ${error.message}`);
@@ -147,4 +161,47 @@ export class GitService {
       throw error;
     }
   }
+
+  /**
+   * Check if there are uncommitted changes
+   */
+  async hasUncommittedChanges(workspacePath?: string): Promise<boolean> {
+    try {
+      const cwd = workspacePath || this.workspacePath;
+      const { stdout } = await execAsync('git status --porcelain', { cwd });
+      return stdout.trim().length > 0;
+    } catch (error: any) {
+      this.logger.error(`Failed to check uncommitted changes: ${error.message}`);
+      return false;
+    }
+  }
+
+  /**
+   * Stage changes for commit
+   */
+  async stageChanges(workspacePath?: string, files: string = '.'): Promise<void> {
+    try {
+      const cwd = workspacePath || this.workspacePath;
+      await execAsync(`git add ${files}`, { cwd });
+      this.logger.debug(`Staged changes: ${files}`);
+    } catch (error: any) {
+      this.logger.error(`Failed to stage changes: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Commit staged changes
+   */
+  async commit(message: string, workspacePath?: string): Promise<void> {
+    try {
+      const cwd = workspacePath || this.workspacePath;
+      await execAsync(`git commit -m "${message}"`, { cwd });
+      this.logger.log(`Committed changes: ${message}`);
+    } catch (error: any) {
+      this.logger.error(`Failed to commit: ${error.message}`);
+      throw error;
+    }
+  }
+
 }

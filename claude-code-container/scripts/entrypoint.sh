@@ -100,5 +100,5 @@ shutdown_handler() {
 trap shutdown_handler SIGTERM SIGINT
 
 # Start the application
-echo "=== Starting Claude Code Server ==="
-exec node /app/dist/server.js
+echo "=== Starting Claude Code Container (SQS-based) ==="
+exec node /app/dist/main.js

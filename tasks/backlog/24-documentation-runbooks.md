@@ -463,7 +463,6 @@ npx cdk deploy --all
 - [ ] Developer guide covers common tasks
 - [ ] Monitoring guide includes all metrics
 - [ ] Documentation in Git repository
-- [ ] Team trained on runbooks
 
 ## Documentation Standards
 - Use Markdown format

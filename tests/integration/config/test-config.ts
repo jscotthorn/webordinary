@@ -86,6 +86,7 @@ export interface TestSession {
   previewUrl: string;
   lastActivity: number;
   ttl: number;
+  containerId?: string; // Added for session resumption tests
   metadata?: Record<string, any>;
 }
 

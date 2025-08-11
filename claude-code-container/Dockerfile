@@ -62,8 +62,8 @@ USER appuser
 # Set up directories appuser can access
 RUN mkdir -p ~/.git-credentials-dir
 
-# Expose ports
-EXPOSE 8080 4321 4322
+# Expose only Astro port
+EXPOSE 4321
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
@@ -73,7 +73,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
 ENV NODE_ENV=production \
     CLAUDE_CODE_NON_INTERACTIVE=true \
     ASTRO_TELEMETRY_DISABLED=1 \
-    PORT=8080
+    ASTRO_PORT=4321
 
 # Add helpful labels
 LABEL maintainer="Webordinary <support@webordinary.com>"

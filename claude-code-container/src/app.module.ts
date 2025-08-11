@@ -1,10 +1,12 @@
 import { Module } from '@nestjs/common';
 import { SqsModule } from '@ssut/nestjs-sqs';
-import * as AWS from 'aws-sdk';
+// Removed AWS SDK v2 - using v3 in services
 import { MessageProcessor } from './message-processor.service';
 import { ClaudeExecutorService } from './services/claude-executor.service';
 import { GitService } from './services/git.service';
 import { AstroService } from './services/astro.service';
+import { AutoSleepService } from './services/auto-sleep.service';
+import { WebServerService } from './services/web-server.service';
 
 @Module({
   imports: [
@@ -33,6 +35,8 @@ import { AstroService } from './services/astro.service';
     ClaudeExecutorService,
     GitService,
     AstroService,
+    AutoSleepService,
+    WebServerService,
   ],
 })
 export class AppModule {}

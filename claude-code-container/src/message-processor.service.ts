@@ -1,11 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { SqsMessageHandler, SqsConsumerEventHandler } from '@ssut/nestjs-sqs';
 import { SqsService } from '@ssut/nestjs-sqs';
-import * as AWS from 'aws-sdk';
+import { Message } from '@aws-sdk/client-sqs';
 import { spawn, ChildProcess } from 'child_process';
 import { ClaudeExecutorService } from './services/claude-executor.service';
 import { GitService } from './services/git.service';
 import { AstroService } from './services/astro.service';
+import { AutoSleepService } from './services/auto-sleep.service';
 
 @Injectable()
 export class MessageProcessor {
@@ -19,16 +20,20 @@ export class MessageProcessor {
     private readonly claudeExecutor: ClaudeExecutorService,
     private readonly gitService: GitService,
     private readonly astroService: AstroService,
+    private readonly autoSleepService: AutoSleepService,
   ) {}
 
   @SqsMessageHandler('container-input', false)
-  async handleMessage(message: AWS.SQS.Message) {
+  async handleMessage(message: Message) {
     if (!message.Body) {
       this.logger.error('Received message with no body');
       return;
     }
 
     const body = JSON.parse(message.Body);
+    
+    // Record activity for auto-sleep service
+    this.autoSleepService.recordActivity('sqs-message');
     
     this.logger.log(`Received message for session ${body.sessionId}`);
     
@@ -87,13 +92,13 @@ export class MessageProcessor {
   }
 
   @SqsConsumerEventHandler('container-input', 'error')
-  async onError(error: Error, message: AWS.SQS.Message) {
+  async onError(error: Error, message: Message) {
     this.logger.error(`Error processing message: ${error.message}`, error.stack);
     // Message will be retried or sent to DLQ based on queue configuration
   }
 
   @SqsConsumerEventHandler('container-input', 'processing_error')
-  async onProcessingError(error: Error, message: AWS.SQS.Message) {
+  async onProcessingError(error: Error, message: Message) {
     this.logger.error(`Processing error: ${error.message}`, error.stack);
   }
 

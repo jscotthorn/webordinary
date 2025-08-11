@@ -16,10 +16,10 @@ import {
   StandardUnit
 } from '@aws-sdk/client-cloudwatch';
 import { marshall, unmarshall } from '@aws-sdk/util-dynamodb';
-import fetch from 'node-fetch';
+// Use built-in fetch for Node.js 18+
+const fetch = globalThis.fetch;
 import { v4 as uuidv4 } from 'uuid';
 import WebSocket from 'ws';
-import https from 'https';
 
 import { TEST_CONFIG, CreateSessionParams, TestSession, TestResults } from '../config/test-config.js';
 
@@ -29,7 +29,6 @@ export class IntegrationTestHarness {
   private readonly cloudWatchClient: CloudWatchClient;
   private readonly albEndpoint: string;
   private readonly testSessions: Set<string> = new Set();
-  private readonly httpsAgent: https.Agent;
 
   constructor() {
     const awsConfig = {
@@ -42,10 +41,6 @@ export class IntegrationTestHarness {
     this.cloudWatchClient = new CloudWatchClient(awsConfig);
     this.albEndpoint = TEST_CONFIG.endpoints.alb;
     
-    // Create HTTPS agent that accepts self-signed certificates
-    this.httpsAgent = new https.Agent({
-      rejectUnauthorized: false
-    });
   }
 
   /**
@@ -134,7 +129,6 @@ export class IntegrationTestHarness {
         },
         body: JSON.stringify(requestBody),
         signal: controller.signal,
-        agent: this.httpsAgent
       });
 
       clearTimeout(timeoutId);
@@ -179,8 +173,7 @@ export class IntegrationTestHarness {
             'User-Agent': 'webordinary-integration-test'
           },
           signal: controller.signal,
-          agent: this.httpsAgent
-        });
+          });
 
         clearTimeout(timeoutId);
         
@@ -216,7 +209,6 @@ export class IntegrationTestHarness {
           'X-Session-ID': sessionId,
           'User-Agent': 'webordinary-integration-test'
         },
-        agent: this.httpsAgent,
         body: JSON.stringify({ filePath }),
         signal: controller.signal
       });
@@ -254,7 +246,6 @@ export class IntegrationTestHarness {
           'X-Session-ID': sessionId,
           'User-Agent': 'webordinary-integration-test'
         },
-        agent: this.httpsAgent,
         body: JSON.stringify({ command }),
         signal: controller.signal
       });
@@ -582,5 +573,281 @@ export class IntegrationTestHarness {
 
   private async sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  // Session Resumption Methods
+
+  /**
+   * Sets container status in DynamoDB
+   */
+  async setContainerStatus(
+    containerId: string, 
+    status: 'running' | 'idle' | 'stopped' | 'starting' | 'stopping',
+    additionalData?: {
+      containerIp?: string;
+      taskArn?: string;
+      lastActivity?: number;
+    }
+  ): Promise<void> {
+    try {
+      const item: any = {
+        containerId: { S: containerId },
+        status: { S: status },
+        lastActivity: { N: (additionalData?.lastActivity || Date.now()).toString() }
+      };
+
+      if (additionalData?.containerIp) {
+        item.containerIp = { S: additionalData.containerIp };
+      }
+      
+      if (additionalData?.taskArn) {
+        item.taskArn = { S: additionalData.taskArn };
+      }
+
+      await this.dynamoClient.send(new PutItemCommand({
+        TableName: 'webordinary-containers',
+        Item: item
+      }));
+
+      console.log(`Container ${containerId} status set to: ${status}`);
+    } catch (error) {
+      throw new Error(`Failed to set container status: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Gets container status from DynamoDB
+   */
+  async getContainerStatus(containerId: string): Promise<{
+    status?: string;
+    containerIp?: string;
+    taskArn?: string;
+    lastActivity?: number;
+  } | null> {
+    try {
+      const response = await this.dynamoClient.send(new GetItemCommand({
+        TableName: 'webordinary-containers',
+        Key: {
+          containerId: { S: containerId }
+        }
+      }));
+
+      if (!response.Item) {
+        return null;
+      }
+
+      return {
+        status: response.Item.status?.S,
+        containerIp: response.Item.containerIp?.S,
+        taskArn: response.Item.taskArn?.S,
+        lastActivity: response.Item.lastActivity?.N ? parseInt(response.Item.lastActivity.N) : undefined
+      };
+    } catch (error) {
+      throw new Error(`Failed to get container status: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Waits for container to reach a specific status
+   */
+  async waitForContainerStatus(
+    containerId: string, 
+    targetStatus: string, 
+    timeout: number = 60000
+  ): Promise<void> {
+    const startTime = Date.now();
+    
+    while (Date.now() - startTime < timeout) {
+      const container = await this.getContainerStatus(containerId);
+      
+      if (container?.status === targetStatus) {
+        console.log(`Container ${containerId} reached status: ${targetStatus}`);
+        return;
+      }
+      
+      await this.sleep(2000); // Check every 2 seconds
+    }
+    
+    throw new Error(`Container ${containerId} did not reach status ${targetStatus} within ${timeout}ms`);
+  }
+
+  /**
+   * Gets count of active sessions for a container
+   */
+  async getActiveSessionCount(containerId: string): Promise<number> {
+    try {
+      const response = await this.dynamoClient.send(new ScanCommand({
+        TableName: 'webordinary-thread-mappings',
+        FilterExpression: 'containerId = :containerId',
+        ExpressionAttributeValues: {
+          ':containerId': { S: containerId }
+        },
+        Select: 'COUNT'
+      }));
+
+      return response.Count || 0;
+    } catch (error) {
+      console.warn(`Failed to get active session count: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      return 0;
+    }
+  }
+
+  /**
+   * Creates a thread mapping for session resumption tests
+   */
+  async createThreadMapping(sessionId: string, threadId: string, containerId: string): Promise<void> {
+    try {
+      await this.dynamoClient.send(new PutItemCommand({
+        TableName: 'webordinary-thread-mappings',
+        Item: {
+          threadId: { S: threadId },
+          sessionId: { S: sessionId },
+          containerId: { S: containerId },
+          status: { S: 'active' },
+          createdAt: { N: Date.now().toString() }
+        }
+      }));
+
+      console.log(`Created thread mapping: ${threadId} -> ${sessionId}`);
+    } catch (error) {
+      throw new Error(`Failed to create thread mapping: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Creates a complete test session with thread mapping for resumption tests
+   */
+  async createResumptionTestSession(params: CreateSessionParams): Promise<TestSession> {
+    // Create the base session using existing method
+    const session = await this.createTestSession(params);
+    
+    // Create container ID
+    const containerId = `${params.clientId || TEST_CONFIG.testData.clientId}-${session.threadId}-${params.userId}`;
+    
+    // Create thread mapping
+    await this.createThreadMapping(session.sessionId, session.threadId, containerId);
+    
+    // Return enhanced session with containerId
+    return {
+      ...session,
+      containerId
+    };
+  }
+
+  /**
+   * Tests Hermes API session resumption directly
+   */
+  async testHermesSessionResumption(threadId: string, clientId: string): Promise<{
+    status: number;
+    data: any;
+    responseTime: number;
+  }> {
+    const startTime = Date.now();
+    
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+      const response = await fetch(`${TEST_CONFIG.endpoints.hermes}/api/sessions/resume-preview`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${process.env.INTERNAL_API_KEY || 'test-key'}`
+        },
+        body: JSON.stringify({
+          chatThreadId: threadId,
+          clientId: clientId
+        }),
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+
+      const responseTime = Date.now() - startTime;
+      const data = await response.json();
+
+      return {
+        status: response.status,
+        data,
+        responseTime
+      };
+    } catch (error) {
+      const responseTime = Date.now() - startTime;
+      throw new Error(`Hermes API test failed after ${responseTime}ms: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Tests ALB routing with session resumption
+   */
+  async testALBSessionRouting(threadId: string, clientId: string): Promise<{
+    status: number;
+    body: string;
+    responseTime: number;
+    headers: any;
+  }> {
+    const startTime = Date.now();
+    
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 20000);
+
+      const response = await fetch(
+        `https://edit.${clientId}.webordinary.com/session/${threadId}/`,
+        {
+          signal: controller.signal,
+          // redirect: 'manual' // Not supported by built-in fetch
+        }
+      );
+
+      clearTimeout(timeoutId);
+
+      const responseTime = Date.now() - startTime;
+      const body = await response.text();
+      
+      // Convert headers to plain object
+      const headers: any = {};
+      response.headers.forEach((value, key) => {
+        headers[key] = value;
+      });
+
+      return {
+        status: response.status,
+        body,
+        responseTime,
+        headers
+      };
+    } catch (error) {
+      const responseTime = Date.now() - startTime;
+      throw new Error(`ALB routing test failed after ${responseTime}ms: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Simulates container auto-sleep scenario
+   */
+  async simulateContainerAutoSleep(containerId: string): Promise<void> {
+    console.log(`Simulating auto-sleep for container: ${containerId}`);
+    
+    // Set container to idle first
+    await this.setContainerStatus(containerId, 'idle', {
+      lastActivity: Date.now() - (21 * 60 * 1000) // 21 minutes ago
+    });
+    
+    await this.sleep(1000);
+    
+    // Check session count (would be done by auto-sleep service)
+    const sessionCount = await this.getActiveSessionCount(containerId);
+    
+    if (sessionCount === 0) {
+      // Simulate graceful shutdown
+      await this.setContainerStatus(containerId, 'stopping');
+      await this.sleep(2000);
+      await this.setContainerStatus(containerId, 'stopped');
+      
+      console.log(`Container ${containerId} auto-sleep simulation complete`);
+    } else {
+      console.log(`Container ${containerId} has ${sessionCount} active sessions, staying awake`);
+    }
   }
 }

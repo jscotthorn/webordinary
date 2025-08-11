@@ -1,0 +1,66 @@
+# Build stage
+FROM node:18-slim AS builder
+
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+COPY tsconfig.json ./
+
+# Install dependencies and build
+RUN npm ci && npm install -g typescript
+COPY src ./src
+RUN npm run build
+
+# Runtime stage
+FROM node:18-slim
+
+# Install essential system dependencies
+RUN apt-get update && apt-get install -y \
+    git \
+    curl \
+    ca-certificates \
+    unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install AWS CLI (minimal installation)
+RUN curl -sL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "aws.zip" && \
+    unzip -q aws.zip && \
+    ./aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli && \
+    rm -rf aws.zip aws
+
+# Install Claude Code CLI globally
+RUN npm install -g @anthropic-ai/claude-code
+
+# Create non-root user
+RUN useradd -m -s /bin/bash containeruser
+
+# Set up application directory
+WORKDIR /app
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package*.json ./
+
+# Set up workspace
+RUN mkdir -p /workspace && chown -R containeruser:containeruser /workspace /app
+
+# Switch to non-root user
+USER containeruser
+
+# Set working directory to workspace
+WORKDIR /workspace
+
+# Set memory limit for Node.js
+ENV NODE_OPTIONS="--max-old-space-size=768"
+ENV NODE_ENV=production
+ENV ASTRO_TELEMETRY_DISABLED=1
+
+# Only expose Astro port
+EXPOSE 4321
+
+# Simple health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:4321 || pgrep -f "node /app/dist/index.js" || exit 1
+
+# Start the simplified container
+CMD ["node", "/app/dist/index.js"]
