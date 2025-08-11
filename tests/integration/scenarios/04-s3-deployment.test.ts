@@ -6,21 +6,21 @@
  */
 
 import { TestDataManager } from '../src/test-data-manager.js';
-import { testUtils } from '../src/setup-tests.js';
-import fetch from 'node-fetch';
+// Use built-in fetch for Node.js 18+
+const fetch = globalThis.fetch;
 import { S3Client, HeadObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
 import { CloudWatchLogsClient, FilterLogEventsCommand } from '@aws-sdk/client-cloudwatch-logs';
 
 describe('S3 Deployment Verification', () => {
   let testDataManager: TestDataManager;
-  const TEST_TIMEOUT = 90000; // 1.5 minutes
-  
-  // Initialize AWS clients
-  const s3Client = new S3Client({ region: global.testConfig.aws.region });
-  const logsClient = new CloudWatchLogsClient({ region: global.testConfig.aws.region });
+  let s3Client: S3Client;
+  let logsClient: CloudWatchLogsClient;
 
   beforeAll(() => {
     testDataManager = new TestDataManager();
+    // Initialize AWS clients after global config is loaded
+    s3Client = new S3Client({ region: global.testConfig.aws.region });
+    logsClient = new CloudWatchLogsClient({ region: global.testConfig.aws.region });
   });
 
   afterAll(async () => {

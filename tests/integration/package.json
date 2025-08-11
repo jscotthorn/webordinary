@@ -11,17 +11,19 @@
     "test:cold-start": "jest scenarios/01-cold-start-session-flow.test.ts",
     "test:persistence": "jest scenarios/02-session-persistence.test.ts",
     "test:concurrent": "jest scenarios/03-concurrent-sessions.test.ts",
-    "test:routing": "jest scenarios/04-alb-routing.test.ts",
+    "test:s3": "jest scenarios/04-s3-deployment.test.ts",
     "test:resumption": "jest scenarios/05-session-resumption.test.ts",
     "test:all": "jest scenarios/*.test.ts",
     "dev": "ts-node src/index.ts"
   },
   "dependencies": {
     "@aws-sdk/client-cloudwatch": "^3.485.0",
+    "@aws-sdk/client-cloudwatch-logs": "^3.864.0",
     "@aws-sdk/client-dynamodb": "^3.485.0",
     "@aws-sdk/client-ecs": "^3.485.0",
     "@aws-sdk/client-efs": "^3.485.0",
     "@aws-sdk/client-elastic-load-balancing-v2": "^3.485.0",
+    "@aws-sdk/client-s3": "^3.864.0",
     "@aws-sdk/util-dynamodb": "^3.485.0",
     "node-fetch": "^3.3.2",
     "uuid": "^9.0.1",
@@ -41,10 +43,14 @@
   "type": "module",
   "jest": {
     "preset": "ts-jest/presets/default-esm",
-    "extensionsToTreatAsEsm": [".ts"],
+    "extensionsToTreatAsEsm": [
+      ".ts"
+    ],
     "testEnvironment": "node",
     "testTimeout": 300000,
-    "setupFilesAfterEnv": ["<rootDir>/src/setup-tests.ts"],
+    "setupFilesAfterEnv": [
+      "<rootDir>/src/setup-tests.ts"
+    ],
     "transform": {
       "^.+\\.tsx?$": [
         "ts-jest",

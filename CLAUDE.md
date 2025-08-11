@@ -1,28 +1,119 @@
-## Important things
-* Refer to source documentation for integrating with libraries and services.
-* Run tests available for any repositories or components you edit. Update test cases when features are created, changed, or expanded.
-* Limit task completion notes to items accomplished, items remaining, tests created and/or run and their status, and recommendations for improvements.
+# WebOrdinary Quick Reference
 
-## Development Commands
+## 🚨 CRITICAL: S3 Architecture (Sprint 6/7)
+- **NO WEB SERVERS**: Containers don't serve HTTP (removed port 8080)
+- **S3 DEPLOYMENT**: All sites served from S3 buckets
+- **CLOUDWATCH HEALTH**: No HTTP health checks, use logs
+- **BUILD → S3 SYNC**: Every message triggers Astro build and S3 deployment
 
-### Hephaestus (CDK Project) (`/hephaestus/`)
-AWS CDK-based infrastructure as code.
-
-```bash
-npm run build          # Compile TypeScript
-npm run test           # Run Jest unit tests
-npm run cdk            # Run CDK CLI commands
-npx cdk deploy         # Deploy infrastructure to AWS
-npx cdk diff          # Compare deployed stack with current state
-npx cdk synth         # Generate CloudFormation template
+## 📍 Project Structure
+```
+/webordinary/
+├── /claude-code-container/   # Message processor, S3 deployer
+│   ├── README.md             # Full documentation
+│   ├── CLAUDE.md            # Quick reference
+│   └── /tests/              # JavaScript tests
+├── /hermes/                 # Message orchestration service
+│   ├── README.md           # Full documentation
+│   ├── CLAUDE.md          # Quick reference
+│   └── /test/             # NestJS tests
+├── /hephaestus/           # CDK infrastructure
+│   └── README.md         # Infrastructure docs
+├── /tests/integration/    # TypeScript integration tests
+│   └── README.md        # Test guide
+└── /tasks/              # Sprint planning & completion notes
 ```
 
-### Hermes (NestJS Application) (`/hermes/`)
-NestJS-based backend service.
+## 🧪 Test Commands
+
+### Container Tests (`/claude-code-container/`)
 ```bash
-npm run build          # Build the application
-npm run start          # Start in production mode
-npm run test           # Run unit tests
-npm run test:cov       # Run tests with coverage
-npm run test:e2e       # Run end-to-end tests
+npm test all              # All tests
+npm test container        # Container integration
+npm test scripts          # Script tests
 ```
+
+### Hermes Tests (`/hermes/`)
+```bash
+AWS_PROFILE=personal npm run test:integration
+AWS_PROFILE=personal npm run test:e2e
+```
+
+### Integration Tests (`/tests/integration/`)
+```bash
+AWS_PROFILE=personal npm run test:infrastructure
+AWS_PROFILE=personal npm run test:s3
+AWS_PROFILE=personal npm run test:all
+```
+
+## 🔧 Quick Commands
+
+### Build & Deploy
+```bash
+# Build container (ALWAYS use platform flag)
+docker build --platform linux/amd64 -t webordinary/claude-code-astro .
+
+# Deploy infrastructure
+cd hephaestus && npx cdk deploy --all --profile personal
+
+# Push container to ECR
+./build.sh  # or ./build-and-push.sh
+```
+
+### Service Management
+```bash
+# Scale Hermes
+AWS_PROFILE=personal aws ecs update-service \
+  --cluster webordinary-edit-cluster \
+  --service webordinary-hermes-service \
+  --desired-count 1  # or 0 to stop
+
+# Scale Edit Container
+AWS_PROFILE=personal aws ecs update-service \
+  --cluster webordinary-edit-cluster \
+  --service webordinary-edit-service \
+  --desired-count 1  # or 0 to stop
+```
+
+### Monitoring
+```bash
+# View logs
+AWS_PROFILE=personal aws logs tail /ecs/webordinary/edit --since 10m
+AWS_PROFILE=personal aws logs tail /ecs/hermes --since 10m
+
+# Check S3 deployment
+AWS_PROFILE=personal aws s3 ls s3://edit.amelia.webordinary.com/
+
+# Queue status
+AWS_PROFILE=personal aws sqs get-queue-attributes \
+  --queue-url https://sqs.us-west-2.amazonaws.com/942734823970/webordinary-email-queue \
+  --attribute-names ApproximateNumberOfMessages
+```
+
+## 📝 Key Points
+1. **Use AWS_PROFILE=personal** for all AWS commands
+2. **Always build with `--platform linux/amd64`** for ECS
+3. **S3 bucket**: `edit.amelia.webordinary.com` is primary
+4. **Git branches**: `thread-{chatThreadId}` per session
+5. **Scale to 0** when not in use (saves ~$15/month)
+6. **Tests need `.env.local`** with AWS credentials
+
+## 🐛 Common Fixes
+- **Exec format error**: Add `--platform linux/amd64` to Docker build
+- **S3 not updating**: Check AWS credentials and bucket permissions
+- **Tests failing**: Set `AWS_PROFILE=personal`
+- **Container not starting**: Check ECR image exists
+- **No logs**: Verify CloudWatch log group `/ecs/webordinary/edit`
+
+## 📚 Documentation Priority
+1. **Task completion notes**: `/tasks/sprint-*/`
+2. **Component READMEs**: See project structure above
+3. **Component CLAUDE.md**: Quick reference for each service
+4. **Test documentation**: See test commands above
+
+## 💡 Important Notes
+- Run tests when modifying code
+- Update test cases when features change
+- Limit completion notes to: accomplished, remaining, test status, recommendations
+- Refer to source documentation for library/service integration
+- All web traffic serves from S3, not containers

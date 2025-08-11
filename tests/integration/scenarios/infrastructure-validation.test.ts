@@ -7,7 +7,8 @@
 
 import { TestDataManager } from '../src/test-data-manager.js';
 import { testUtils } from '../src/setup-tests.js';
-import fetch from 'node-fetch';
+// Use built-in fetch for Node.js 18+
+const fetch = globalThis.fetch;
 
 describe('Infrastructure Validation', () => {
   let testDataManager: TestDataManager;
