@@ -62,22 +62,18 @@ USER appuser
 # Set up directories appuser can access
 RUN mkdir -p ~/.git-credentials-dir
 
-# Expose only Astro port
-EXPOSE 4321
+# No ports exposed - container only processes messages
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-  CMD /app/scripts/health-check.sh
+# No health check needed - ECS will monitor task status
 
 # Set environment variables
 ENV NODE_ENV=production \
     CLAUDE_CODE_NON_INTERACTIVE=true \
-    ASTRO_TELEMETRY_DISABLED=1 \
-    ASTRO_PORT=4321
+    ASTRO_TELEMETRY_DISABLED=1
 
 # Add helpful labels
 LABEL maintainer="Webordinary <support@webordinary.com>"
-LABEL description="Claude Code SDK container with Astro dev server for live editing"
+LABEL description="Claude Code SDK container for message processing and S3 deployment"
 LABEL version="1.0.0"
 LABEL component="claude-code-container"
 

@@ -5,8 +5,6 @@ import { Message } from '@aws-sdk/client-sqs';
 import { spawn, ChildProcess } from 'child_process';
 import { ClaudeExecutorService } from './services/claude-executor.service';
 import { GitService } from './services/git.service';
-import { AstroService } from './services/astro.service';
-import { AutoSleepService } from './services/auto-sleep.service';
 
 @Injectable()
 export class MessageProcessor {
@@ -19,8 +17,6 @@ export class MessageProcessor {
     private readonly sqsService: SqsService,
     private readonly claudeExecutor: ClaudeExecutorService,
     private readonly gitService: GitService,
-    private readonly astroService: AstroService,
-    private readonly autoSleepService: AutoSleepService,
   ) {}
 
   @SqsMessageHandler('container-input', false)
@@ -31,9 +27,6 @@ export class MessageProcessor {
     }
 
     const body = JSON.parse(message.Body);
-    
-    // Record activity for auto-sleep service
-    this.autoSleepService.recordActivity('sqs-message');
     
     this.logger.log(`Received message for session ${body.sessionId}`);
     
@@ -193,7 +186,8 @@ export class MessageProcessor {
   }
 
   private getPreviewUrl(sessionId: string): string {
-    const domain = process.env.PREVIEW_DOMAIN || 'preview.webordinary.com';
-    return `https://${domain}/session/${sessionId}/`;
+    // Now using S3 static hosting via CloudFront
+    const domain = process.env.S3_SITE_DOMAIN || 'edit.amelia.webordinary.com';
+    return `https://${domain}/`;
   }
 }

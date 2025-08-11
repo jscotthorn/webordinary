@@ -10,12 +10,11 @@
   "dependencies": {
     "@aws-sdk/client-sqs": "^3.864.0",
     "@aws-sdk/client-dynamodb": "^3.864.0",
+    "@aws-sdk/client-s3": "^3.864.0",
     "@nestjs/common": "^11.1.6",
     "@nestjs/core": "^11.1.6",
     "@ssut/nestjs-sqs": "^3.0.1",
     "@types/node": "^20.11.0",
-    "express": "^4.18.3",
-    "@types/express": "^4.17.21",
     "node-fetch": "^3.3.2",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2"
