@@ -11,6 +11,35 @@ export class GitService {
 
   constructor() {
     this.workspacePath = process.env.WORKSPACE_PATH || '/workspace';
+    // Configure git credentials on initialization
+    this.configureGitCredentials().catch(err => 
+      this.logger.warn(`Failed to configure git credentials: ${err.message}`)
+    );
+  }
+
+  /**
+   * Configure git credentials and user info for the container
+   */
+  async configureGitCredentials(): Promise<void> {
+    try {
+      // Set git user info
+      await execAsync(`git config --global user.email "container@webordinary.com"`);
+      await execAsync(`git config --global user.name "WebOrdinary Container"`);
+      
+      // Configure credential helper to use in-memory store
+      await execAsync(`git config --global credential.helper 'cache --timeout=3600'`);
+      
+      const token = process.env.GITHUB_TOKEN;
+      if (!token) {
+        this.logger.warn('No GITHUB_TOKEN found, push operations may fail');
+        return;
+      }
+      
+      this.logger.debug('Git credentials configured successfully');
+    } catch (error: any) {
+      this.logger.error(`Failed to configure git credentials: ${error.message}`);
+      throw error;
+    }
   }
 
   async checkoutBranch(branch: string): Promise<void> {
@@ -33,7 +62,7 @@ export class GitService {
     }
   }
 
-  async autoCommitChanges(message: string): Promise<void> {
+  async autoCommitChanges(message: string, pushAfter: boolean = true): Promise<void> {
     try {
       // Check if there are changes to commit
       const { stdout: status } = await execAsync('git status --porcelain', { 
@@ -54,6 +83,17 @@ export class GitService {
       });
       
       this.logger.log(`Auto-committed changes: ${message}`);
+      
+      // NEW: Push to remote if requested and enabled
+      if (pushAfter && process.env.GIT_PUSH_ENABLED !== 'false') {
+        try {
+          await this.push();
+          this.logger.log('Pushed auto-commit to remote');
+        } catch (pushError: any) {
+          this.logger.warn(`Failed to push auto-commit: ${pushError.message}`);
+          // Don't throw - push failure shouldn't break workflow
+        }
+      }
     } catch (error: any) {
       this.logger.warn(`Auto-commit failed: ${error.message}`);
       // Non-fatal error, continue processing
@@ -110,6 +150,34 @@ export class GitService {
       this.logger.error(`Failed to push: ${error.message}`);
       throw error;
     }
+  }
+
+  /**
+   * Push with retry logic for handling transient failures
+   */
+  async pushWithRetry(maxRetries: number = 3): Promise<boolean> {
+    const retryCount = parseInt(process.env.GIT_PUSH_RETRY_COUNT || '3', 10);
+    const attempts = Math.min(maxRetries, retryCount);
+    
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        await this.push();
+        return true;
+      } catch (error: any) {
+        this.logger.warn(`Push attempt ${attempt}/${attempts} failed: ${error.message}`);
+        
+        if (attempt === attempts) {
+          this.logger.error('All push attempts failed');
+          return false;
+        }
+        
+        // Wait before retry (exponential backoff)
+        const delay = 1000 * Math.pow(2, attempt - 1); // 1s, 2s, 4s
+        this.logger.debug(`Waiting ${delay}ms before retry...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+    return false;
   }
 
   async pull(branch: string = 'main'): Promise<void> {
