@@ -8,9 +8,9 @@ WORKDIR /app
 COPY package*.json ./
 COPY tsconfig.json ./
 
-# Install build dependencies
-RUN npm ci --only=production && \
-    npm install -g typescript tsx
+# Install all dependencies for build
+RUN npm install && \
+    npm install -g typescript
 
 # Copy source code
 COPY src/ ./src/
@@ -26,10 +26,14 @@ RUN apt-get update && apt-get install -y \
     git \
     curl \
     ca-certificates \
-    python3 \
-    python3-pip \
-    build-essential \
+    unzip \
     && rm -rf /var/lib/apt/lists/*
+
+# Install AWS CLI v2 (official method for Docker)
+RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" && \
+    unzip awscliv2.zip && \
+    ./aws/install && \
+    rm -rf awscliv2.zip aws/
 
 # Install Claude Code CLI globally (for Task 03 integration)
 # For now, we'll create a placeholder since we're using simulation

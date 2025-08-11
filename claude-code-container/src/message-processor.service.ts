@@ -5,6 +5,7 @@ import { Message } from '@aws-sdk/client-sqs';
 import { spawn, ChildProcess } from 'child_process';
 import { ClaudeExecutorService } from './services/claude-executor.service';
 import { GitService } from './services/git.service';
+import { S3SyncService } from './services/s3-sync.service';
 
 @Injectable()
 export class MessageProcessor {
@@ -17,6 +18,7 @@ export class MessageProcessor {
     private readonly sqsService: SqsService,
     private readonly claudeExecutor: ClaudeExecutorService,
     private readonly gitService: GitService,
+    private readonly s3SyncService: S3SyncService,
   ) {}
 
   @SqsMessageHandler('container-input', false)
@@ -48,6 +50,18 @@ export class MessageProcessor {
     try {
       const result = await this.executeClaudeCode(body);
       
+      // Build and deploy to S3 if any files changed
+      if (result.filesChanged && result.filesChanged.length > 0) {
+        this.logger.log('Files changed, building and deploying to S3...');
+        try {
+          await this.s3SyncService.buildAndDeploy(body.clientId);
+          this.logger.log('Successfully deployed to S3');
+        } catch (error: any) {
+          this.logger.error(`S3 deployment failed: ${error.message}`);
+          // Continue anyway - don't fail the whole message
+        }
+      }
+      
       // Send success response
       await this.sendResponse({
         sessionId: body.sessionId,
@@ -56,7 +70,7 @@ export class MessageProcessor {
         success: true,
         summary: result.output,
         filesChanged: result.filesChanged,
-        previewUrl: this.getPreviewUrl(body.sessionId),
+        previewUrl: this.s3SyncService.getDeployedUrl(body.clientId),
       });
     } catch (error: any) {
       if (error.message === 'InterruptError') {
@@ -185,9 +199,4 @@ export class MessageProcessor {
     });
   }
 
-  private getPreviewUrl(sessionId: string): string {
-    // Now using S3 static hosting via CloudFront
-    const domain = process.env.S3_SITE_DOMAIN || 'edit.amelia.webordinary.com';
-    return `https://${domain}/`;
-  }
 }

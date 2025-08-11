@@ -4,6 +4,7 @@ import { SqsModule } from '@ssut/nestjs-sqs';
 import { MessageProcessor } from './message-processor.service';
 import { ClaudeExecutorService } from './services/claude-executor.service';
 import { GitService } from './services/git.service';
+import { S3SyncService } from './services/s3-sync.service';
 
 @Module({
   imports: [
@@ -31,6 +32,7 @@ import { GitService } from './services/git.service';
     MessageProcessor,
     ClaudeExecutorService,
     GitService,
+    S3SyncService,
   ],
 })
 export class AppModule {}
