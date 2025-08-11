@@ -100,6 +100,53 @@ export class GitService {
     }
   }
 
+  /**
+   * Commit with both subject and body for detailed messages
+   */
+  async commitWithBody(subject: string, body?: string): Promise<void> {
+    try {
+      // Check if there are changes to commit
+      const { stdout: status } = await execAsync('git status --porcelain', { 
+        cwd: this.workspacePath 
+      });
+      
+      if (!status.trim()) {
+        this.logger.debug('No changes to commit');
+        return;
+      }
+
+      // Stage all changes
+      await execAsync('git add -A', { cwd: this.workspacePath });
+      
+      if (body) {
+        // Use a heredoc-style approach for multi-line commits
+        const fullMessage = `${subject}\n\n${body}`;
+        // Write message to a temp file to avoid escaping issues
+        const tempFile = `/tmp/commit-msg-${Date.now()}.txt`;
+        const fs = require('fs').promises;
+        await fs.writeFile(tempFile, fullMessage);
+        
+        try {
+          await execAsync(`git commit -F ${tempFile}`, { cwd: this.workspacePath });
+          await fs.unlink(tempFile); // Clean up temp file
+        } catch (commitError) {
+          await fs.unlink(tempFile); // Clean up even on error
+          throw commitError;
+        }
+      } else {
+        // Simple single-line commit
+        await execAsync(`git commit -m "${subject.replace(/"/g, '\\"')}"`, { 
+          cwd: this.workspacePath 
+        });
+      }
+      
+      this.logger.log(`Committed: ${subject}`);
+    } catch (error: any) {
+      this.logger.error(`Failed to commit: ${error.message}`);
+      throw error;
+    }
+  }
+
   async getCurrentBranch(): Promise<string> {
     try {
       const { stdout } = await execAsync('git branch --show-current', {

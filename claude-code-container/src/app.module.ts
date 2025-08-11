@@ -5,6 +5,7 @@ import { MessageProcessor } from './message-processor.service';
 import { ClaudeExecutorService } from './services/claude-executor.service';
 import { GitService } from './services/git.service';
 import { S3SyncService } from './services/s3-sync.service';
+import { CommitMessageService } from './services/commit-message.service';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { S3SyncService } from './services/s3-sync.service';
     ClaudeExecutorService,
     GitService,
     S3SyncService,
+    CommitMessageService,
   ],
 })
 export class AppModule {}

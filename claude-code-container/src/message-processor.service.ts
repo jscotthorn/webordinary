@@ -7,6 +7,7 @@ import { promisify } from 'util';
 import { ClaudeExecutorService } from './services/claude-executor.service';
 import { GitService } from './services/git.service';
 import { S3SyncService } from './services/s3-sync.service';
+import { CommitMessageService } from './services/commit-message.service';
 
 @Injectable()
 export class MessageProcessor {
@@ -21,6 +22,7 @@ export class MessageProcessor {
     private readonly claudeExecutor: ClaudeExecutorService,
     private readonly gitService: GitService,
     private readonly s3SyncService: S3SyncService,
+    private readonly commitMessageService: CommitMessageService,
   ) {
     this.workspacePath = process.env.WORKSPACE_PATH || '/workspace';
   }
@@ -121,8 +123,14 @@ export class MessageProcessor {
         });
       });
       
-      // Auto-commit any changes
-      await this.gitService.autoCommitChanges('Interrupted by new message', false);
+      // Auto-commit any changes with meaningful message
+      const commitContext = {
+        interrupted: true,
+        sessionId: this.currentSessionId,
+        filesChanged: [],  // We don't have file list at interrupt time
+      };
+      const commitMessage = this.commitMessageService.generateCommitMessage(commitContext);
+      await this.gitService.commitWithBody(commitMessage);
       
       // If we interrupted a build, try to sync whatever was built
       if (processName === 'npm') {
@@ -152,7 +160,13 @@ export class MessageProcessor {
     
     // Commit current changes if any
     if (this.currentSessionId) {
-      await this.gitService.autoCommitChanges('Switching sessions');
+      const commitContext = {
+        instruction: 'Switching sessions',
+        sessionId: this.currentSessionId,
+        filesChanged: [],
+      };
+      const commitMessage = this.commitMessageService.generateCommitMessage(commitContext);
+      await this.gitService.commitWithBody(commitMessage);
     }
     
     // Switch to session branch
@@ -218,6 +232,7 @@ export class MessageProcessor {
 
   /**
    * Extract a meaningful commit message from the message body
+   * @deprecated Use commitMessageService.generateCommitMessage instead
    */
   private extractCommitMessage(message: any): string {
     // Use instruction or command as commit message
@@ -254,8 +269,22 @@ export class MessageProcessor {
       // Step 2: Commit changes (don't push yet)
       if (result.filesChanged.length > 0) {
         this.logger.log('Step 2/5: Committing changes...');
-        const commitMsg = this.extractCommitMessage(message);
-        await this.gitService.autoCommitChanges(commitMsg, false);
+        
+        // Generate meaningful commit message
+        const commitContext = {
+          instruction: message.instruction,
+          command: message.command,
+          filesChanged: result.filesChanged,
+          sessionId: message.sessionId,
+          userId: message.userId,
+          timestamp: Date.now(),
+        };
+        
+        const commitMessage = this.commitMessageService.generateCommitMessage(commitContext);
+        const commitBody = this.commitMessageService.generateCommitBody(commitContext);
+        
+        // Use new commit method with body support
+        await this.gitService.commitWithBody(commitMessage, commitBody);
       } else {
         this.logger.log('Step 2/5: No files changed, skipping commit');
       }
