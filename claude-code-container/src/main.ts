@@ -21,7 +21,12 @@ async function bootstrap() {
   const repoUrl = process.env.REPO_URL;
   if (repoUrl) {
     logger.log(`Initializing repository from ${repoUrl}`);
-    await gitService.initRepository(repoUrl);
+    try {
+      await gitService.initRepository(repoUrl);
+    } catch (error: any) {
+      logger.error(`Failed to initialize repository: ${error.message}`);
+      logger.warn('Continuing without repository - will initialize when needed');
+    }
   }
 
   // Check AWS CLI availability
@@ -63,6 +68,13 @@ async function bootstrap() {
   } else {
     logger.warn('- No OUTPUT_QUEUE_URL provided, response sending disabled');
   }
+  
+  // Keep the process alive for health checks
+  // In production, the SQS consumer will keep it alive
+  // For now, just prevent exit
+  setInterval(() => {
+    logger.debug('Container heartbeat - waiting for messages...');
+  }, 60000); // Log every minute to show we're alive
 }
 
 bootstrap().catch((err) => {

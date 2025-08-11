@@ -5,7 +5,25 @@ set -e
 
 echo "=== Claude Code Container Starting ==="
 echo "Timestamp: $(date)"
-echo "Environment: ${NODE_ENV:-development}"
+echo "Environment: ${NODE_ENV:-production}"
+
+# Handle AWS credentials based on environment
+if [ "$NODE_ENV" = "development" ] && [ -n "$AWS_PROFILE" ]; then
+  echo "📦 Development mode: Using AWS profile '${AWS_PROFILE}'"
+  # AWS CLI will automatically use the profile from environment variable
+  # Verify AWS access
+  if aws sts get-caller-identity > /dev/null 2>&1; then
+    ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+    echo "✅ AWS access verified (Account: $ACCOUNT_ID)"
+  else
+    echo "❌ AWS credentials not working for profile '${AWS_PROFILE}'"
+    echo "Please ensure ~/.aws/credentials is mounted and profile exists"
+    exit 1
+  fi
+elif [ "$NODE_ENV" = "production" ]; then
+  echo "🚀 Production mode: Using IAM role credentials"
+  # In production, ECS task role provides credentials automatically
+fi
 
 # Check required environment variables
 if [ -z "$GITHUB_TOKEN" ]; then
@@ -41,8 +59,13 @@ echo "Validating GitHub token..."
 if curl -s -f -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/user > /dev/null; then
   echo "✓ GitHub token is valid"
 else
-  echo "✗ GitHub token validation failed"
-  exit 1
+  echo "⚠️ GitHub token validation failed"
+  if [ "$NODE_ENV" = "development" ]; then
+    echo "   Continuing in development mode without GitHub access"
+  else
+    echo "   Exiting - GitHub token required in production"
+    exit 1
+  fi
 fi
 
 # Ensure workspace directory exists (EFS mount point)
@@ -69,10 +92,12 @@ echo "=== Environment Information ==="
 echo "Node version: $(node --version)"
 echo "NPM version: $(npm --version)"
 echo "Git version: $(git --version)"
+echo "AWS CLI version: $(aws --version 2>&1 | head -1)"
 echo "Workspace: /workspace"
-echo "Client ID: ${CLIENT_ID:-not_set}"
-echo "User ID: ${USER_ID:-not_set}"
+echo "Client ID: ${CLIENT_ID:-${DEFAULT_CLIENT_ID:-not_set}}"
+echo "User ID: ${USER_ID:-${DEFAULT_USER_ID:-not_set}}"
 echo "Thread ID: ${THREAD_ID:-not_set}"
+echo "S3 Bucket: edit.${CLIENT_ID:-${DEFAULT_CLIENT_ID:-amelia}}.webordinary.com"
 echo "Auto-shutdown: ${AUTO_SHUTDOWN_MINUTES:-5} minutes"
 
 # Start auto-shutdown timer in background

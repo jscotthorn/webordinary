@@ -138,23 +138,58 @@ export class GitService {
 
   async initRepository(repoUrl?: string): Promise<void> {
     try {
+      const clientId = process.env.CLIENT_ID || process.env.DEFAULT_CLIENT_ID || 'ameliastamps';
+      const userId = process.env.USER_ID || process.env.DEFAULT_USER_ID || 'scott';
+      const projectPath = `${this.workspacePath}/${clientId}/${userId}/amelia-astro`;
+      
+      // Ensure project directory exists
+      await execAsync(`mkdir -p ${projectPath}`);
+      
       // Check if already a git repo
       try {
-        await execAsync('git rev-parse --git-dir', { cwd: this.workspacePath });
-        this.logger.log('Git repository already initialized');
+        await execAsync('git rev-parse --git-dir', { cwd: projectPath });
+        this.logger.log('Git repository already initialized in ' + projectPath);
+        
+        // Pull latest changes if repo exists
+        if (repoUrl) {
+          try {
+            await execAsync('git pull origin main', { cwd: projectPath });
+            this.logger.log('Pulled latest changes from repository');
+          } catch (pullError: any) {
+            this.logger.warn(`Could not pull latest changes: ${pullError.message}`);
+          }
+        }
         return;
       } catch {
-        // Not a git repo, initialize it
+        // Not a git repo, need to initialize/clone it
       }
 
       if (repoUrl) {
-        // Clone the repository
-        await execAsync(`git clone ${repoUrl} .`, { cwd: this.workspacePath });
-        this.logger.log(`Cloned repository from ${repoUrl}`);
+        // Check if directory is empty
+        const { stdout: files } = await execAsync('ls -A', { cwd: projectPath });
+        
+        if (files.trim()) {
+          // Directory not empty, clean it first
+          this.logger.warn('Directory not empty, cleaning before clone');
+          await execAsync(`rm -rf ${projectPath}/*`, { cwd: projectPath });
+          await execAsync(`rm -rf ${projectPath}/.*`, { cwd: projectPath }).catch(() => {});
+        }
+        
+        // Clone the repository with GitHub token authentication
+        const githubToken = process.env.GITHUB_TOKEN;
+        let authenticatedUrl = repoUrl;
+        
+        if (githubToken && repoUrl.includes('github.com')) {
+          // Add token to URL for authentication
+          authenticatedUrl = repoUrl.replace('https://github.com/', `https://${githubToken}@github.com/`);
+        }
+        
+        await execAsync(`git clone ${authenticatedUrl} ${projectPath}`);
+        this.logger.log(`Cloned repository from ${repoUrl} to ${projectPath}`);
       } else {
         // Initialize empty repo
-        await execAsync('git init', { cwd: this.workspacePath });
-        this.logger.log('Initialized empty git repository');
+        await execAsync('git init', { cwd: projectPath });
+        this.logger.log('Initialized empty git repository in ' + projectPath);
       }
     } catch (error: any) {
       this.logger.error(`Failed to initialize repository: ${error.message}`);

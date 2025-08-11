@@ -15,15 +15,22 @@ export class S3SyncService {
     this.workspacePath = process.env.WORKSPACE_PATH || '/workspace';
   }
 
+  private getProjectPath(): string {
+    const clientId = process.env.CLIENT_ID || process.env.DEFAULT_CLIENT_ID || 'ameliastamps';
+    const userId = process.env.USER_ID || process.env.DEFAULT_USER_ID || 'scott';
+    return path.join(this.workspacePath, clientId, userId, 'amelia-astro');
+  }
+
   /**
    * Build the Astro project
    */
   async buildAstroProject(): Promise<void> {
     this.logger.log('Building Astro project...');
+    const projectPath = this.getProjectPath();
     
     try {
       const { stdout, stderr } = await execAsync('npm run build', {
-        cwd: this.workspacePath,
+        cwd: projectPath,
         maxBuffer: 10 * 1024 * 1024, // 10MB buffer
       });
 
@@ -45,7 +52,8 @@ export class S3SyncService {
   async syncToS3(clientId?: string): Promise<void> {
     // Use provided clientId or fall back to environment variable
     const bucketName = this.getBucketName(clientId);
-    const distPath = path.join(this.workspacePath, 'dist');
+    const projectPath = this.getProjectPath();
+    const distPath = path.join(projectPath, 'dist');
 
     // Check if dist directory exists
     try {
