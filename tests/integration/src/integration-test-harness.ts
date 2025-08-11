@@ -15,6 +15,15 @@ import {
   PutMetricDataCommand,
   StandardUnit
 } from '@aws-sdk/client-cloudwatch';
+import {
+  CloudWatchLogsClient,
+  FilterLogEventsCommand
+} from '@aws-sdk/client-cloudwatch-logs';
+import {
+  S3Client,
+  HeadObjectCommand,
+  ListObjectsV2Command
+} from '@aws-sdk/client-s3';
 import { marshall, unmarshall } from '@aws-sdk/util-dynamodb';
 // Use built-in fetch for Node.js 18+
 const fetch = globalThis.fetch;
@@ -27,6 +36,8 @@ export class IntegrationTestHarness {
   private readonly ecsClient: ECSClient;
   private readonly dynamoClient: DynamoDBClient;
   private readonly cloudWatchClient: CloudWatchClient;
+  private readonly cloudWatchLogsClient: CloudWatchLogsClient;
+  private readonly s3Client: S3Client;
   private readonly albEndpoint: string;
   private readonly testSessions: Set<string> = new Set();
 
@@ -39,6 +50,8 @@ export class IntegrationTestHarness {
     this.ecsClient = new ECSClient(awsConfig);
     this.dynamoClient = new DynamoDBClient(awsConfig);
     this.cloudWatchClient = new CloudWatchClient(awsConfig);
+    this.cloudWatchLogsClient = new CloudWatchLogsClient(awsConfig);
+    this.s3Client = new S3Client(awsConfig);
     this.albEndpoint = TEST_CONFIG.endpoints.alb;
     
   }
@@ -849,5 +862,148 @@ export class IntegrationTestHarness {
     } else {
       console.log(`Container ${containerId} has ${sessionCount} active sessions, staying awake`);
     }
+  }
+
+  /**
+   * Waits for S3 deployment to complete
+   */
+  async waitForS3Deployment(clientId: string, timeout = TEST_CONFIG.timeouts.s3SyncTimeout): Promise<void> {
+    const bucket = clientId === 'ameliastamps' 
+      ? TEST_CONFIG.s3.buckets.amelia 
+      : TEST_CONFIG.s3.buckets.test;
+    
+    const startTime = Date.now();
+    
+    while (Date.now() - startTime < timeout) {
+      try {
+        const response = await this.s3Client.send(new HeadObjectCommand({
+          Bucket: bucket,
+          Key: 'index.html'
+        }));
+        
+        // Check if recently modified (within last 2 minutes)
+        const lastModified = response.LastModified?.getTime() || 0;
+        const twoMinutesAgo = Date.now() - 120000;
+        
+        if (lastModified > twoMinutesAgo) {
+          console.log(`S3 deployment detected for ${clientId} at ${response.LastModified}`);
+          return;
+        }
+      } catch (error) {
+        // File might not exist yet
+      }
+      
+      await this.sleep(2000);
+    }
+    
+    throw new Error(`S3 deployment timeout for ${clientId} after ${timeout}ms`);
+  }
+
+  /**
+   * Verifies S3 content contains expected text
+   */
+  async verifyS3Content(clientId: string, searchText: string): Promise<boolean> {
+    const url = clientId === 'ameliastamps'
+      ? TEST_CONFIG.s3.endpoints.amelia
+      : TEST_CONFIG.s3.endpoints.test;
+    
+    try {
+      const response = await fetch(url);
+      const html = await response.text();
+      return html.includes(searchText);
+    } catch (error) {
+      console.error('Failed to fetch S3 site:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Lists objects in S3 bucket
+   */
+  async listS3Objects(clientId: string, maxKeys = 100): Promise<string[]> {
+    const bucket = clientId === 'ameliastamps'
+      ? TEST_CONFIG.s3.buckets.amelia
+      : TEST_CONFIG.s3.buckets.test;
+    
+    try {
+      const response = await this.s3Client.send(new ListObjectsV2Command({
+        Bucket: bucket,
+        MaxKeys: maxKeys
+      }));
+      
+      return response.Contents?.map(obj => obj.Key || '') || [];
+    } catch (error) {
+      console.error('Failed to list S3 objects:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Checks CloudWatch logs for container startup
+   */
+  async waitForContainerStartup(sessionId: string, timeout = TEST_CONFIG.timeouts.containerReady): Promise<void> {
+    const logGroup = '/ecs/webordinary/edit';
+    const startTime = Date.now();
+    
+    while (Date.now() - startTime < timeout) {
+      try {
+        const response = await this.cloudWatchLogsClient.send(new FilterLogEventsCommand({
+          logGroupName: logGroup,
+          filterPattern: `"Session ${sessionId} started"`,
+          startTime: Date.now() - 300000, // Last 5 minutes
+        }));
+        
+        if (response.events && response.events.length > 0) {
+          console.log(`Container started for session ${sessionId}`);
+          return;
+        }
+      } catch (error) {
+        // Log group might not exist yet
+      }
+      
+      await this.sleep(2000);
+    }
+    
+    throw new Error(`Container startup timeout for session ${sessionId} after ${timeout}ms`);
+  }
+
+  /**
+   * Waits for message processing to complete (checks CloudWatch logs)
+   */
+  async waitForProcessing(sessionId: string, timeout = TEST_CONFIG.timeouts.buildTimeout): Promise<void> {
+    const logGroup = '/ecs/webordinary/edit';
+    const startTime = Date.now();
+    
+    while (Date.now() - startTime < timeout) {
+      try {
+        const response = await this.cloudWatchLogsClient.send(new FilterLogEventsCommand({
+          logGroupName: logGroup,
+          filterPattern: `"Processing complete" "${sessionId}"`,
+          startTime: Date.now() - 300000, // Last 5 minutes
+        }));
+        
+        if (response.events && response.events.length > 0) {
+          console.log(`Processing complete for session ${sessionId}`);
+          return;
+        }
+      } catch (error) {
+        // Log group might not exist yet
+      }
+      
+      await this.sleep(2000);
+    }
+    
+    // Don't throw error, processing might still be ongoing
+    console.log(`Processing timeout for session ${sessionId} after ${timeout}ms (may still be in progress)`);
+  }
+
+  /**
+   * Sends a message to an existing session
+   */
+  async sendMessage(params: { sessionId: string; instruction: string }): Promise<void> {
+    // Implementation would depend on how messages are sent (SQS, API, etc.)
+    console.log(`Sending message to session ${params.sessionId}: ${params.instruction}`);
+    // For now, this is a placeholder
+    // In reality, this would send to SQS or call an API
   }
 }

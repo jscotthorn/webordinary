@@ -5,7 +5,24 @@
   "main": "dist/main.js",
   "scripts": {
     "build": "tsc",
-    "start": "node dist/main.js"
+    "start": "node dist/main.js",
+    "test": "node tests/run-tests.js",
+    "test:all": "node tests/run-tests.js all",
+    "test:unit": "node tests/run-tests.js unit",
+    "test:integration": "node tests/run-tests.js integration",
+    "test:e2e": "node tests/run-tests.js e2e",
+    "test:scripts": "node tests/run-tests.js scripts",
+    "test:list": "node tests/run-tests.js list",
+    "test:multi-session": "node tests/integration/multi-session.test.js",
+    "test:git-scenarios": "bash tests/integration/git-scenarios.test.sh",
+    "test:git-push": "bash tests/integration/git-push.test.sh",
+    "test:container": "node tests/integration/container.test.js",
+    "test:monitor": "bash tests/scripts/monitor.sh",
+    "test:monitor:watch": "bash tests/scripts/monitor.sh --watch",
+    "test:aws": "AWS_PROFILE=personal npm test",
+    "test:aws:all": "AWS_PROFILE=personal npm test all",
+    "test:aws:container": "AWS_PROFILE=personal npm test container",
+    "test:aws:multi": "AWS_PROFILE=personal npm run test:multi-session"
   },
   "dependencies": {
     "@aws-sdk/client-sqs": "^3.864.0",

@@ -15,11 +15,23 @@ export interface TestConfig {
     hermes: string;
     api: string;
   };
+  s3: {
+    buckets: {
+      test: string;
+      amelia: string;
+    };
+    endpoints: {
+      test: string;
+      amelia: string;
+    };
+  };
   timeouts: {
     containerReady: number;
     sessionExpiry: number;
     scaleDown: number;
     testTimeout: number;
+    buildTimeout: number;
+    s3SyncTimeout: number;
   };
   testData: {
     clientId: string;
@@ -32,6 +44,7 @@ export interface TestConfig {
     albListenerArn: string;
     vpcId?: string;
   };
+  containerHealthCheck: string;
 }
 
 export const TEST_CONFIG: TestConfig = {
@@ -51,11 +64,23 @@ export const TEST_CONFIG: TestConfig = {
     hermes: process.env.HERMES_ENDPOINT || 'https://webordinary-edit-alb-916355172.us-west-2.elb.amazonaws.com/hermes',
     api: process.env.API_ENDPOINT || 'https://webordinary-edit-alb-916355172.us-west-2.elb.amazonaws.com/api'
   },
+  s3: {
+    buckets: {
+      test: 'edit.test.webordinary.com',
+      amelia: 'edit.amelia.webordinary.com'
+    },
+    endpoints: {
+      test: 'http://edit.test.webordinary.com.s3-website-us-west-2.amazonaws.com',
+      amelia: 'http://edit.amelia.webordinary.com'
+    }
+  },
   timeouts: {
     containerReady: parseInt(process.env.CONTAINER_READY_TIMEOUT || '60000', 10), // 1 minute
     sessionExpiry: parseInt(process.env.SESSION_EXPIRY_TIMEOUT || '70000', 10), // 70 seconds (session TTL + buffer)
     scaleDown: parseInt(process.env.SCALE_DOWN_TIMEOUT || '30000', 10), // 30 seconds
-    testTimeout: parseInt(process.env.TEST_TIMEOUT || '300000', 10) // 5 minutes
+    testTimeout: parseInt(process.env.TEST_TIMEOUT || '300000', 10), // 5 minutes
+    buildTimeout: parseInt(process.env.BUILD_TIMEOUT || '60000', 10), // 1 minute for Astro build
+    s3SyncTimeout: parseInt(process.env.S3_SYNC_TIMEOUT || '30000', 10) // 30 seconds for S3 sync
   },
   testData: {
     clientId: process.env.TEST_CLIENT_ID || 'integration-test-client',
@@ -67,7 +92,8 @@ export const TEST_CONFIG: TestConfig = {
     efsFileSystemId: process.env.EFS_FILE_SYSTEM_ID || 'fs-0ab7a5e03c0dc5bfd',
     albListenerArn: process.env.ALB_LISTENER_ARN || 'arn:aws:elasticloadbalancing:us-west-2:942734823970:listener/app/webordinary-edit-alb/916355172/f8c5e5b1234567890',
     vpcId: process.env.VPC_ID
-  }
+  },
+  containerHealthCheck: 'cloudwatch-logs'
 };
 
 export interface CreateSessionParams {

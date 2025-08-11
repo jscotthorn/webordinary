@@ -1,204 +1,277 @@
-# Claude Code Container
+# Claude Code Container with S3 Architecture
 
-A containerized environment for running Claude Code in AWS Fargate with Astro development server support. Evolving from HTTP API-based to SQS message-based architecture.
+This is the Claude Code container that processes SQS messages, builds Astro sites, and deploys directly to S3 (Sprint 6/7 architecture).
 
-## Architecture Evolution
+## Architecture
 
-### Current Architecture (HTTP-based)
-- Express API server on port 8080
-- Astro dev server on port 4321
-- WebSocket proxy on port 4322
-- Thread-based workspace isolation
+The container uses NestJS with `@ssut/nestjs-sqs` for message handling and deploys to S3:
 
-### Next-Generation Architecture (Sprint 4-5)
-- **No Express Server**: Removed in Sprint 5
-- **SQS Message Processing**: Replaces HTTP APIs
-- **Multi-Session Support**: One container handles multiple chat threads
-- **Interrupt Handling**: Graceful switching between sessions
-- **Simplified Ports**: Only port 4321 for Astro preview
+- **SQS Message Processing**: Receives instructions via SQS queues
+- **S3 Static Hosting**: Builds and deploys sites directly to S3 buckets
+- **No Web Server**: Container no longer serves web traffic (removed port 8080)
+- **Git Branch Management**: Automatically switches branches based on chat thread ID
+- **Automatic S3 Sync**: Deploys to S3 after each build
 
-## Core Components
+## Environment Variables
 
-### ThreadManager (`src/thread-manager.ts`)
-- **Purpose**: Manages user workspaces and Git branch isolation
-- **Features**:
-  - Creates isolated workspace directories at `/workspace/{clientId}/{userId}/project`
-  - Manages thread-specific Git branches (`thread-{chatThreadId}`)
-  - Handles GitHub authentication with personal access tokens
-  - Configures Git safe directories for EFS-mounted volumes
-- **Status**: ✅ Fully operational
+Create a `.env.local` file (see `.env.local` example in repo):
 
-### AstroManager (`src/astro-manager.ts`)
-- **Purpose**: Manages Astro development server lifecycle
-- **Features**:
-  - Spawns `npx astro dev --host 0.0.0.0 --port 4321`
-  - WebSocket support for HMR
-  - Health checking with timeout
-  - Process management (start/stop/restart)
-- **Status**: ✅ Operational
-
-### ClaudeExecutor (`src/claude-executor.ts`)
-- **Purpose**: Executes Claude Code commands
-- **Current**: Direct Claude Code CLI integration
-- **Future**: Interrupt handling for session switching
-- **Status**: ✅ Working with Bedrock
-
-### MultiSessionProcessor (New - Sprint 4)
-- **Purpose**: Poll multiple SQS queues for different sessions
-- **Features**:
-  - Dynamic queue discovery via DynamoDB
-  - Interrupt handling for session switching
-  - Git branch switching per session
-  - Auto-commit on interrupts
-- **Status**: 🚧 In development
-
-## Container Configuration
-
-### Environment Variables
 ```bash
-# Current (HTTP-based)
-GITHUB_TOKEN          # GitHub personal access token
-AUTO_SHUTDOWN_MINUTES # Idle timeout (default: 20)
-WORKSPACE_PATH       # EFS mount point (default: /workspace)
-PORT                 # API server port (default: 8080)
+# AWS Configuration
+AWS_PROFILE=personal
+AWS_REGION=us-west-2
+AWS_ACCOUNT_ID=942734823970
 
-# New (SQS-based) - Sprint 4-5
-CONTAINER_ID         # {clientId}-{projectId}-{userId}
-CLIENT_ID            # Client identifier
-PROJECT_ID           # Project identifier  
-USER_ID              # User identifier
-# No INPUT_QUEUE_URL - discovers queues dynamically
+# S3 Configuration
+CLIENT_ID=amelia
+S3_BUCKET_NAME=edit.amelia.webordinary.com
+
+# SQS Configuration (optional for local testing)
+INPUT_QUEUE_URL=https://sqs.us-west-2.amazonaws.com/942734823970/webordinary-email-queue
+OUTPUT_QUEUE_URL=https://sqs.us-west-2.amazonaws.com/942734823970/webordinary-email-dlq
+
+# Container configuration
+WORKSPACE_PATH=/workspace/amelia-astro
+DEFAULT_CLIENT_ID=amelia
+DEFAULT_USER_ID=scott
+
+# GitHub Configuration
+GITHUB_TOKEN=your-github-personal-access-token
+
+# Claude Configuration
+ANTHROPIC_API_KEY=your-anthropic-api-key  # Or 'simulation-key' for testing
 ```
 
-## Migration Path
+## Message Schema
 
-### Sprint 4: Add SQS Support
-1. Keep Express API for backward compatibility
-2. Add SQS polling alongside HTTP endpoints
-3. Implement queue discovery mechanism
-4. Add interrupt handling logic
-5. Test with both communication methods
-
-### Sprint 5: Remove HTTP Dependencies
-1. Remove Express server completely
-2. Remove port 8080 from Dockerfile
-3. Update health checks to use SQS
-4. Simplify container to just Astro + SQS
-5. Update CDK to remove API target groups
-
-## Deployment
-
-### Current Build Process
-```bash
-./build.sh
-# Builds Docker image
-# Tags as latest
-# Pushes to ECR: 942734823970.dkr.ecr.us-west-2.amazonaws.com/webordinary/claude-code-astro
+### Input Message (from Hermes)
+```typescript
+{
+  sessionId: string;        // Chat thread ID
+  commandId: string;        // Unique command identifier
+  timestamp: number;
+  type: 'edit' | 'build' | 'commit' | 'push' | 'preview';
+  instruction: string;
+  userEmail: string;
+  chatThreadId: string;     // For git branch switching
+  context: {
+    branch: string;         // Current git branch
+    lastCommit?: string;
+    filesModified?: string[];
+  };
+}
 ```
 
-### New Simplified Dockerfile (Sprint 5)
-```dockerfile
-FROM node:18-alpine
-RUN apk add --no-cache git
-RUN npm install -g @anthropic/claude-code
+### Output Message (to Hermes)
+```typescript
+{
+  sessionId: string;
+  commandId: string;
+  timestamp: number;
+  success: boolean;
+  summary: string;
+  filesChanged?: string[];
+  error?: string;
+  previewUrl?: string;
+  interrupted?: boolean;    // True if interrupted by new message
+}
+```
 
-WORKDIR /app
-COPY dist/ ./dist/
-COPY package*.json ./
+## Building and Deployment
 
-RUN npm ci --production
-RUN mkdir -p /workspace
+### Build Docker Image
+```bash
+# IMPORTANT: Always build for linux/amd64 for AWS ECS
+docker build --platform linux/amd64 -t webordinary/claude-code-s3:latest .
 
-EXPOSE 4321
-CMD ["node", "dist/index.js"]
+# Or use the build script
+./build.sh  # Builds with correct architecture
+```
+
+### Test Locally
+```bash
+# Run container test
+npm test local-container
+
+# Or run directly with Docker
+docker run -it \
+  --platform linux/amd64 \
+  -e GITHUB_TOKEN="$GITHUB_TOKEN" \
+  -e AWS_PROFILE=personal \
+  -e CLIENT_ID=amelia \
+  -v ~/.aws:/home/appuser/.aws:ro \
+  webordinary/claude-code-s3:latest
+```
+
+### Deploy to ECS/Fargate
+```bash
+# Tag for ECR
+docker tag webordinary/claude-code-s3:latest \
+  942734823970.dkr.ecr.us-west-2.amazonaws.com/webordinary/claude-code-astro:latest
+
+# Push to ECR
+AWS_PROFILE=personal aws ecr get-login-password --region us-west-2 | \
+  docker login --username AWS --password-stdin 942734823970.dkr.ecr.us-west-2.amazonaws.com
+
+docker push 942734823970.dkr.ecr.us-west-2.amazonaws.com/webordinary/claude-code-astro:latest
+
+# Force ECS deployment
+AWS_PROFILE=personal aws ecs update-service \
+  --cluster webordinary-edit-cluster \
+  --service webordinary-edit-service \
+  --force-new-deployment
 ```
 
 ## Testing
 
-### Local Testing (Current)
+### Run Tests
+Tests automatically load environment variables from `.env.local`:
+
 ```bash
-docker run -p 8080:8080 -p 4321:4321 \
-  -e GITHUB_TOKEN=your_token \
-  -v $(pwd)/test-workspace:/workspace \
-  webordinary/claude-code-astro:latest
+# Run all tests (uses .env.local automatically)
+npm test all
+
+# Run specific test suites
+npm test container      # Container integration test
+npm test integration    # Integration tests
+npm test e2e           # End-to-end tests
+npm test scripts       # Script tests
+
+# Or with AWS profile shortcuts
+npm run test:aws:all      # All tests with AWS profile
+npm run test:aws:container # Container test with AWS profile
 ```
 
-### Local Testing (New Architecture)
+### Test Results
+All tests are updated for S3 architecture:
+- ✅ S3 deployment verification
+- ✅ CloudWatch logs for container health
+- ✅ No ALB routing tests (replaced with S3 tests)
+- ✅ Git operations and branch management
+
+## Development
+
+### Install Dependencies
 ```bash
-# Set up local SQS queues (using LocalStack or AWS)
-# Run container with queue URLs
-docker run -p 4321:4321 \
-  -e CONTAINER_ID=test-project-user \
-  -e AWS_ACCESS_KEY_ID=xxx \
-  -e AWS_SECRET_ACCESS_KEY=xxx \
-  webordinary/claude-code-astro:next
+npm install
 ```
 
-## Cost Benefits
+### Build TypeScript
+```bash
+npm run build
+```
 
-### Current Architecture
-- Complex port management (8080, 4321, 4322)
-- One container per thread (inefficient)
-- HTTP API overhead
+### Run Locally (without Docker)
+```bash
+# Load .env.local and run
+npm start
 
-### New Architecture
-- Single port (4321) for Astro only
-- One container per user+project (efficient)
-- SQS costs <$1/month for thousands of messages
-- Better container utilization
-- Simpler operations
+# Run in development mode
+npm run dev
+```
 
-## Known Issues & Solutions
+## Key Features
 
-### Resolved ✅
-1. **EFS Mounting**: Fixed with security groups
-2. **GitHub Auth**: Fixed with credential helper
-3. **Port Mapping**: Will be simplified in Sprint 5
-4. **Container Startup**: Optimized in Sprint 5
+### S3 Deployment
+- **Automatic Build & Deploy**: Processes message → builds Astro → syncs to S3
+- **Direct S3 Hosting**: Sites served from `edit.{client}.webordinary.com`
+- **No Container Web Server**: Removed port 8080, containers only process and deploy
+- **Instant Updates**: S3 sync provides immediate site updates
 
-### In Progress 🚧
-1. **Session Switching**: Implementing interrupt handling
-2. **Queue Discovery**: Building DynamoDB integration
-3. **Container Simplification**: Removing Express dependencies
+### Git Integration
+- **Branch per Session**: Each chat thread gets branch `thread-{chatThreadId}`
+- **Auto-commits**: Before switching sessions or on interrupts
+- **Push to Remote**: Commits are pushed to GitHub after changes
+- **Improved Commit Messages**: Includes instruction context
+
+### Session Management
+- **Multi-Session Support**: Handle multiple chat sessions in one container
+- **Session Persistence**: Work preserved across session switches
+- **Automatic Branch Switching**: Based on chat thread ID
+- **Conflict Resolution**: Handles merge conflicts gracefully
+
+### Error Handling
+- **SQS Retry Logic**: Failed messages retry up to 3 times
+- **Dead Letter Queue**: After failures, messages go to DLQ
+- **CloudWatch Logging**: All operations logged for monitoring
+- **Graceful Recovery**: Container continues after errors
+
+## Architecture Changes (Sprint 6/7)
+
+### What Changed
+1. **No Web Server**: Removed Express server (port 8080) - containers don't serve web traffic
+2. **S3 Static Hosting**: Sites deployed directly to S3 buckets
+3. **CloudWatch Health Checks**: Container health via logs, not HTTP endpoints
+4. **Build & Sync**: Astro build followed by S3 sync after each message
+5. **No ALB Routing**: ALB no longer routes to containers for web traffic
+
+### Old vs New Architecture
+```
+Old: User → ALB → Container:8080 → Astro Dev Server
+New: User → S3 Website
+     SQS → Container → Build → S3 Sync
+```
 
 ## Monitoring
 
-### Current Metrics
-- API response times
-- Container CPU/memory
-- Astro server health
+### CloudWatch Logs
+The container logs to CloudWatch with structured logging:
+- Message receipt and processing
+- Git operations
+- Interrupt events
+- Error details
 
-### New Metrics (Sprint 4-5)
-- Queue processing rate
-- Interrupt frequency
-- Session switch time
-- DLQ message count
-- Container efficiency (sessions per container)
+### SQS Metrics
+Monitor via CloudWatch:
+- Messages sent/received
+- Message age
+- DLQ messages
+- Processing time
 
-## Future Enhancements
+## Troubleshooting
 
-### Sprint 4 Deliverables
-- Multi-queue SQS polling
-- Session interrupt handling
-- Dynamic queue discovery
-- Integration testing
+### Docker Build Issues
+```bash
+# Always use platform flag for ECS
+docker build --platform linux/amd64 -t image-name .
 
-### Sprint 5 Deliverables
-- Remove Express server
-- Simplify container image
-- Optimize resource usage
-- Production deployment
+# Common errors:
+# "exec format error" = wrong architecture (missing --platform)
+# "GITHUB_TOKEN not set" = need to pass token as env var
+```
 
-### Post Sprint 5
-- WebContainer support for browser-based editing
-- Multi-region deployment
-- Advanced caching strategies
-- Real-time collaboration features
+### S3 Deployment Issues
+- **No S3 Updates**: Check AWS credentials and S3 permissions
+- **Bucket Not Found**: Verify bucket name matches `edit.{client}.webordinary.com`
+- **Access Denied**: Check IAM role has S3 write permissions
+- **Sync Failures**: Review CloudWatch logs for AWS CLI errors
 
-## Support
+### Test Failures
+```bash
+# If tests fail with AWS credentials:
+export AWS_PROFILE=personal
+npm test all
 
-For issues or questions:
-- Check CloudWatch logs: `/ecs/webordinary/edit`
-- Review task documentation in `/tasks/sprint-4/` and `/tasks/sprint-5/`
-- Monitor SQS queue metrics in CloudWatch
-- Check DynamoDB for session mappings
+# If tests fail with "read-only filesystem":
+# Tests use /tmp for workspace, not production paths
+```
+
+### Container Issues
+- **SQS Not Receiving**: Check INPUT_QUEUE_URL and IAM permissions
+- **GitHub Token Invalid**: Update token in .env.local
+- **Build Failures**: Check Astro project structure in workspace
+- **Git Conflicts**: Container handles conflicts, check logs for details
+
+### Common Commands
+```bash
+# View container logs
+AWS_PROFILE=personal aws logs tail /ecs/webordinary/edit --since 10m
+
+# Check S3 bucket
+AWS_PROFILE=personal aws s3 ls s3://edit.amelia.webordinary.com/
+
+# Monitor SQS queue
+AWS_PROFILE=personal aws sqs get-queue-attributes \
+  --queue-url https://sqs.us-west-2.amazonaws.com/942734823970/webordinary-email-queue \
+  --attribute-names All
+```

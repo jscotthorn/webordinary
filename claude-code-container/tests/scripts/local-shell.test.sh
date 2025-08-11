@@ -5,7 +5,17 @@
 
 set -e
 
-echo "🐚 Starting container with shell access..."
+echo "🐚 Testing container shell access..."
+
+# Check if running in a TTY environment
+if [ ! -t 0 ]; then
+    echo "⚠️  Not running in TTY environment - skipping interactive test"
+    echo "   This test requires an interactive terminal"
+    echo "✅ Test skipped (non-interactive environment)"
+    exit 0
+fi
+
+echo "Starting container with shell access..."
 
 # Load environment variables
 if [ -f .env.local ]; then
