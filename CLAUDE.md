@@ -21,8 +21,31 @@
 │   └── README.md         # Infrastructure docs
 ├── /tests/integration/    # TypeScript integration tests
 │   └── README.md        # Test guide
+├── /docs/                 # Documentation
+│   └── LOCAL_DEVELOPMENT.md  # Local dev guide
 └── /tasks/              # Sprint planning & completion notes
 ```
+
+## 🏠 Local Development (NEW!)
+
+### Quick Start
+```bash
+# Start local dev environment (Docker Compose)
+./scripts/start-local-dev.sh
+
+# Stop local dev
+./scripts/stop-local-dev.sh
+
+# Run test suite
+./tests/local-dev/test-scenarios.sh
+```
+
+### Key Points
+- Uses Docker Compose for both Hermes and Claude Container
+- Connects to real AWS services (DynamoDB, SQS, S3)
+- Bedrock integration optional (simulation mode by default)
+- Native architecture for local dev (ARM64 on M1/M2 Macs)
+- See `/docs/LOCAL_DEVELOPMENT.md` for complete guide
 
 ## 🧪 Test Commands
 

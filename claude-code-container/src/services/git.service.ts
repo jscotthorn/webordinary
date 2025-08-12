@@ -43,8 +43,9 @@ export class GitService {
   }
 
   async checkoutBranch(branch: string): Promise<void> {
+    const projectPath = this.getProjectPath();
     try {
-      await execAsync(`git checkout ${branch}`, { cwd: this.workspacePath });
+      await execAsync(`git checkout ${branch}`, { cwd: projectPath });
       this.logger.log(`Checked out branch: ${branch}`);
     } catch (error: any) {
       this.logger.error(`Failed to checkout branch ${branch}: ${error.message}`);
@@ -53,8 +54,9 @@ export class GitService {
   }
 
   async createBranch(branch: string): Promise<void> {
+    const projectPath = this.getProjectPath();
     try {
-      await execAsync(`git checkout -b ${branch}`, { cwd: this.workspacePath });
+      await execAsync(`git checkout -b ${branch}`, { cwd: projectPath });
       this.logger.log(`Created and checked out new branch: ${branch}`);
     } catch (error: any) {
       this.logger.error(`Failed to create branch ${branch}: ${error.message}`);
@@ -63,10 +65,11 @@ export class GitService {
   }
 
   async autoCommitChanges(message: string, pushAfter: boolean = true): Promise<void> {
+    const projectPath = this.getProjectPath();
     try {
       // Check if there are changes to commit
       const { stdout: status } = await execAsync('git status --porcelain', { 
-        cwd: this.workspacePath 
+        cwd: projectPath 
       });
       
       if (!status.trim()) {
@@ -75,11 +78,11 @@ export class GitService {
       }
 
       // Stage all changes
-      await execAsync('git add -A', { cwd: this.workspacePath });
+      await execAsync('git add -A', { cwd: projectPath });
       
       // Commit with message
       await execAsync(`git commit -m "Auto-save: ${message}"`, { 
-        cwd: this.workspacePath 
+        cwd: projectPath 
       });
       
       this.logger.log(`Auto-committed changes: ${message}`);
@@ -104,10 +107,11 @@ export class GitService {
    * Commit with both subject and body for detailed messages
    */
   async commitWithBody(subject: string, body?: string): Promise<void> {
+    const projectPath = this.getProjectPath();
     try {
       // Check if there are changes to commit
       const { stdout: status } = await execAsync('git status --porcelain', { 
-        cwd: this.workspacePath 
+        cwd: projectPath 
       });
       
       if (!status.trim()) {
@@ -116,7 +120,7 @@ export class GitService {
       }
 
       // Stage all changes
-      await execAsync('git add -A', { cwd: this.workspacePath });
+      await execAsync('git add -A', { cwd: projectPath });
       
       if (body) {
         // Use a heredoc-style approach for multi-line commits
@@ -127,7 +131,7 @@ export class GitService {
         await fs.writeFile(tempFile, fullMessage);
         
         try {
-          await execAsync(`git commit -F ${tempFile}`, { cwd: this.workspacePath });
+          await execAsync(`git commit -F ${tempFile}`, { cwd: projectPath });
           await fs.unlink(tempFile); // Clean up temp file
         } catch (commitError) {
           await fs.unlink(tempFile); // Clean up even on error
@@ -136,7 +140,7 @@ export class GitService {
       } else {
         // Simple single-line commit
         await execAsync(`git commit -m "${subject.replace(/"/g, '\\"')}"`, { 
-          cwd: this.workspacePath 
+          cwd: projectPath 
         });
       }
       
@@ -148,9 +152,10 @@ export class GitService {
   }
 
   async getCurrentBranch(): Promise<string> {
+    const projectPath = this.getProjectPath();
     try {
       const { stdout } = await execAsync('git branch --show-current', {
-        cwd: this.workspacePath,
+        cwd: projectPath,
       });
       return stdout.trim();
     } catch (error: any) {
@@ -160,9 +165,10 @@ export class GitService {
   }
 
   async getStatus(): Promise<string> {
+    const projectPath = this.getProjectPath();
     try {
       const { stdout } = await execAsync('git status', {
-        cwd: this.workspacePath,
+        cwd: projectPath,
       });
       return stdout;
     } catch (error: any) {
@@ -173,7 +179,7 @@ export class GitService {
 
   async push(branchOrWorkspacePath?: string, branchIfWorkspace?: string, force: boolean = false): Promise<void> {
     try {
-      let cwd = this.workspacePath;
+      let cwd = this.getProjectPath();
       let currentBranch: string;
       
       // Handle overloaded parameters
@@ -228,9 +234,10 @@ export class GitService {
   }
 
   async pull(branch: string = 'main'): Promise<void> {
+    const projectPath = this.getProjectPath();
     try {
       await execAsync(`git pull origin ${branch}`, {
-        cwd: this.workspacePath,
+        cwd: projectPath,
       });
       this.logger.log(`Pulled from origin/${branch}`);
     } catch (error: any) {
@@ -240,9 +247,10 @@ export class GitService {
   }
 
   async fetch(): Promise<void> {
+    const projectPath = this.getProjectPath();
     try {
       await execAsync('git fetch --all', {
-        cwd: this.workspacePath,
+        cwd: projectPath,
       });
       this.logger.log('Fetched all remotes');
     } catch (error: any) {
@@ -251,11 +259,17 @@ export class GitService {
     }
   }
 
+  private getProjectPath(): string {
+    const clientId = process.env.CLIENT_ID || process.env.DEFAULT_CLIENT_ID || 'ameliastamps';
+    const userId = process.env.USER_ID || process.env.DEFAULT_USER_ID || 'scott';
+    return `${this.workspacePath}/${clientId}/${userId}/amelia-astro`;
+  }
+
   async initRepository(repoUrl?: string): Promise<void> {
     try {
       const clientId = process.env.CLIENT_ID || process.env.DEFAULT_CLIENT_ID || 'ameliastamps';
       const userId = process.env.USER_ID || process.env.DEFAULT_USER_ID || 'scott';
-      const projectPath = `${this.workspacePath}/${clientId}/${userId}/amelia-astro`;
+      const projectPath = this.getProjectPath();
       
       // Ensure project directory exists
       await execAsync(`mkdir -p ${projectPath}`);
@@ -290,7 +304,7 @@ export class GitService {
           await execAsync(`rm -rf ${projectPath}/.*`, { cwd: projectPath }).catch(() => {});
         }
         
-        // Clone the repository with GitHub token authentication
+        // Try to clone the repository
         const githubToken = process.env.GITHUB_TOKEN;
         let authenticatedUrl = repoUrl;
         
@@ -299,12 +313,42 @@ export class GitService {
           authenticatedUrl = repoUrl.replace('https://github.com/', `https://${githubToken}@github.com/`);
         }
         
-        await execAsync(`git clone ${authenticatedUrl} ${projectPath}`);
-        this.logger.log(`Cloned repository from ${repoUrl} to ${projectPath}`);
+        try {
+          await execAsync(`git clone ${authenticatedUrl} ${projectPath}`);
+          this.logger.log(`Cloned repository from ${repoUrl} to ${projectPath}`);
+        } catch (cloneError: any) {
+          // If clone fails (e.g., repo doesn't exist), create a local repository
+          this.logger.warn(`Clone failed (${cloneError.message}), creating local repository`);
+          
+          // Initialize empty repo
+          await execAsync('git init', { cwd: projectPath });
+          
+          // Set remote origin for future push
+          await execAsync(`git remote add origin ${repoUrl}`, { cwd: projectPath });
+          
+          // Create initial README
+          const readmeContent = `# ${clientId} Project\n\nInitialized on ${new Date().toISOString()}\n`;
+          await execAsync(`echo "${readmeContent}" > README.md`, { cwd: projectPath });
+          
+          // Initial commit
+          await execAsync('git add .', { cwd: projectPath });
+          await execAsync('git commit -m "Initial commit"', { cwd: projectPath });
+          
+          this.logger.log(`Created local repository with remote origin: ${repoUrl}`);
+        }
       } else {
-        // Initialize empty repo
+        // Initialize empty repo without remote
         await execAsync('git init', { cwd: projectPath });
-        this.logger.log('Initialized empty git repository in ' + projectPath);
+        
+        // Create initial README
+        const readmeContent = `# Local Project\n\nInitialized on ${new Date().toISOString()}\n`;
+        await execAsync(`echo "${readmeContent}" > README.md`, { cwd: projectPath });
+        
+        // Initial commit
+        await execAsync('git add .', { cwd: projectPath });
+        await execAsync('git commit -m "Initial commit"', { cwd: projectPath });
+        
+        this.logger.log('Initialized local git repository in ' + projectPath);
       }
     } catch (error: any) {
       this.logger.error(`Failed to initialize repository: ${error.message}`);
@@ -317,7 +361,7 @@ export class GitService {
    */
   async hasUncommittedChanges(workspacePath?: string): Promise<boolean> {
     try {
-      const cwd = workspacePath || this.workspacePath;
+      const cwd = workspacePath || this.getProjectPath();
       const { stdout } = await execAsync('git status --porcelain', { cwd });
       return stdout.trim().length > 0;
     } catch (error: any) {
@@ -331,7 +375,7 @@ export class GitService {
    */
   async stageChanges(workspacePath?: string, files: string = '.'): Promise<void> {
     try {
-      const cwd = workspacePath || this.workspacePath;
+      const cwd = workspacePath || this.getProjectPath();
       await execAsync(`git add ${files}`, { cwd });
       this.logger.debug(`Staged changes: ${files}`);
     } catch (error: any) {
@@ -345,7 +389,7 @@ export class GitService {
    */
   async commit(message: string, workspacePath?: string): Promise<void> {
     try {
-      const cwd = workspacePath || this.workspacePath;
+      const cwd = workspacePath || this.getProjectPath();
       await execAsync(`git commit -m "${message}"`, { cwd });
       this.logger.log(`Committed changes: ${message}`);
     } catch (error: any) {
@@ -358,6 +402,7 @@ export class GitService {
    * Safely switch branches with stash support
    */
   async safeBranchSwitch(targetBranch: string): Promise<boolean> {
+    const projectPath = this.getProjectPath();
     try {
       // Check for uncommitted changes
       const hasChanges = await this.hasUncommittedChanges();
@@ -368,20 +413,20 @@ export class GitService {
         // Stash changes with descriptive message
         const stashMessage = `Auto-stash before switching to ${targetBranch}`;
         await execAsync(`git stash push -m "${stashMessage}"`, {
-          cwd: this.workspacePath
+          cwd: projectPath
         });
       }
       
       // Try to checkout branch
       try {
         await execAsync(`git checkout ${targetBranch}`, {
-          cwd: this.workspacePath
+          cwd: projectPath
         });
       } catch (checkoutError: any) {
         // Branch doesn't exist, create it
         if (checkoutError.message.includes('did not match any')) {
           await execAsync(`git checkout -b ${targetBranch}`, {
-            cwd: this.workspacePath
+            cwd: projectPath
           });
         } else {
           throw checkoutError;
@@ -393,7 +438,7 @@ export class GitService {
         try {
           this.logger.log('Applying stashed changes...');
           await execAsync('git stash pop', {
-            cwd: this.workspacePath
+            cwd: projectPath
           });
         } catch (stashError: any) {
           this.logger.warn('Could not apply stash cleanly, keeping in stash list');
@@ -412,10 +457,11 @@ export class GitService {
    * Automatically resolve merge conflicts
    */
   async resolveConflictsAutomatically(): Promise<boolean> {
+    const projectPath = this.getProjectPath();
     try {
       // Check if we're in a conflict state
       const { stdout: status } = await execAsync('git status --porcelain', {
-        cwd: this.workspacePath
+        cwd: projectPath
       });
       
       const conflictFiles = status
@@ -432,16 +478,16 @@ export class GitService {
       // Strategy: Accept current branch version (--ours)
       for (const file of conflictFiles) {
         await execAsync(`git checkout --ours "${file}"`, {
-          cwd: this.workspacePath
+          cwd: projectPath
         });
         await execAsync(`git add "${file}"`, {
-          cwd: this.workspacePath
+          cwd: projectPath
         });
       }
       
       // Commit the resolution
       await execAsync('git commit -m "Auto-resolved conflicts (kept local changes)"', {
-        cwd: this.workspacePath
+        cwd: projectPath
       });
       
       this.logger.log('Conflicts auto-resolved using local version');
@@ -456,13 +502,14 @@ export class GitService {
    * Push with automatic conflict resolution
    */
   async safePush(branch?: string): Promise<boolean> {
+    const projectPath = this.getProjectPath();
     try {
       const currentBranch = branch || await this.getCurrentBranch();
       
       // First attempt direct push
       try {
         await execAsync(`git push origin ${currentBranch}`, {
-          cwd: this.workspacePath
+          cwd: projectPath
         });
         this.logger.log(`Pushed branch ${currentBranch} successfully`);
         return true;
@@ -483,17 +530,18 @@ export class GitService {
    * Handle non-fast-forward push errors
    */
   private async handleNonFastForward(branch: string): Promise<boolean> {
+    const projectPath = this.getProjectPath();
     this.logger.log('Remote has changes, attempting to merge...');
     
     try {
       // Pull with rebase to keep history clean
       await execAsync(`git pull --rebase origin ${branch}`, {
-        cwd: this.workspacePath
+        cwd: projectPath
       });
       
       // Try push again
       await execAsync(`git push origin ${branch}`, {
-        cwd: this.workspacePath
+        cwd: projectPath
       });
       
       this.logger.log('Successfully pushed after rebase');
@@ -502,13 +550,13 @@ export class GitService {
       if (rebaseError.message.includes('conflict')) {
         // Abort rebase and try merge instead
         await execAsync('git rebase --abort', {
-          cwd: this.workspacePath
+          cwd: projectPath
         }).catch(() => {}); // Ignore abort errors
         
         // Try merge strategy
         try {
           await execAsync(`git pull origin ${branch}`, {
-            cwd: this.workspacePath
+            cwd: projectPath
           });
           
           // Resolve any conflicts
@@ -516,7 +564,7 @@ export class GitService {
           
           // Push merged result
           await execAsync(`git push origin ${branch}`, {
-            cwd: this.workspacePath
+            cwd: projectPath
           });
           
           this.logger.log('Successfully pushed after merge');
@@ -535,28 +583,29 @@ export class GitService {
    * Recover repository from bad state
    */
   async recoverRepository(): Promise<void> {
+    const projectPath = this.getProjectPath();
     this.logger.log('Attempting repository recovery...');
     
     try {
       // Check if we're in the middle of a merge/rebase
       const { stdout: gitDir } = await execAsync('git rev-parse --git-dir', {
-        cwd: this.workspacePath
+        cwd: projectPath
       });
       
       // Abort any in-progress operations
-      await execAsync('git merge --abort', { cwd: this.workspacePath }).catch(() => {});
-      await execAsync('git rebase --abort', { cwd: this.workspacePath }).catch(() => {});
-      await execAsync('git cherry-pick --abort', { cwd: this.workspacePath }).catch(() => {});
+      await execAsync('git merge --abort', { cwd: projectPath }).catch(() => {});
+      await execAsync('git rebase --abort', { cwd: projectPath }).catch(() => {});
+      await execAsync('git cherry-pick --abort', { cwd: projectPath }).catch(() => {});
       
       // Reset to clean state if needed
       const { stdout: status } = await execAsync('git status --porcelain', {
-        cwd: this.workspacePath
+        cwd: projectPath
       });
       
       if (status.includes('UU ')) {
         // Unresolved conflicts, reset to HEAD
         await execAsync('git reset --hard HEAD', {
-          cwd: this.workspacePath
+          cwd: projectPath
         });
         this.logger.warn('Reset repository to HEAD due to conflicts');
       }

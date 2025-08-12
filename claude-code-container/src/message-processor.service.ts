@@ -8,6 +8,8 @@ import { ClaudeExecutorService } from './services/claude-executor.service';
 import { GitService } from './services/git.service';
 import { S3SyncService } from './services/s3-sync.service';
 import { CommitMessageService } from './services/commit-message.service';
+import type { WorkMessage, ResponseMessage } from './types/queue-messages';
+import { isWorkMessage } from './types/queue-messages';
 
 @Injectable()
 export class MessageProcessor {
@@ -36,7 +38,24 @@ export class MessageProcessor {
 
     const body = JSON.parse(message.Body);
     
-    this.logger.log(`Received message for session ${body.sessionId}`);
+    // Validate it's a work message
+    if (!isWorkMessage(body)) {
+      this.logger.error(`Invalid message type: ${(body as any).type || 'undefined'}`);
+      return;
+    }
+    
+    this.logger.log(`Received work message for session ${body.sessionId}`);
+    
+    // Initialize repository if repo URL is provided
+    if (body.repoUrl) {
+      this.logger.log(`Initializing repository from: ${body.repoUrl}`);
+      try {
+        await this.gitService.initRepository(body.repoUrl);
+      } catch (error: any) {
+        this.logger.warn(`Repository initialization failed (may already exist): ${error.message}`);
+        // Continue anyway - the repository might already be initialized
+      }
+    }
     
     // Any new message interrupts current work
     if (this.currentProcess) {
@@ -58,37 +77,49 @@ export class MessageProcessor {
       const result = await this.executeCompleteWorkflow(body);
       
       // Send success response
-      await this.sendResponse({
+      const successResponse: ResponseMessage = {
+        type: 'response',
         sessionId: body.sessionId,
-        commandId: body.commandId,
-        timestamp: Date.now(),
+        projectId: body.projectId,
+        userId: body.userId,
+        commandId: body.commandId || '',
+        timestamp: new Date().toISOString(),
         success: true,
         summary: result.summary,
         filesChanged: result.filesChanged,
         previewUrl: result.siteUrl,
         buildSuccess: result.buildSuccess,
         deploySuccess: result.deploySuccess,
-      });
+      };
+      await this.sendResponse(successResponse);
     } catch (error: any) {
       if (error.message === 'InterruptError') {
         // Send interrupt notification
-        await this.sendResponse({
+        const interruptResponse: ResponseMessage = {
+          type: 'response',
           sessionId: body.sessionId,
-          commandId: body.commandId,
-          timestamp: Date.now(),
+          projectId: body.projectId,
+          userId: body.userId,
+          commandId: body.commandId || '',
+          timestamp: new Date().toISOString(),
           success: false,
           summary: 'Process interrupted by new message',
           interrupted: true,
-        });
+        };
+        await this.sendResponse(interruptResponse);
       } else {
         // Send error response
-        await this.sendResponse({
+        const errorResponse: ResponseMessage = {
+          type: 'response',
           sessionId: body.sessionId,
-          commandId: body.commandId,
-          timestamp: Date.now(),
+          projectId: body.projectId,
+          userId: body.userId,
+          commandId: body.commandId || '',
+          timestamp: new Date().toISOString(),
           success: false,
           error: error.message,
-        });
+        };
+        await this.sendResponse(errorResponse);
       }
     } finally {
       this.currentProcess = null;
@@ -190,48 +221,34 @@ export class MessageProcessor {
   }
 
   private async executeClaudeCode(message: any): Promise<any> {
-    return new Promise((resolve, reject) => {
-      // Start Claude Code process
-      this.currentProcess = spawn('claude-code', [
-        '--instruction', message.instruction,
-        '--context', JSON.stringify(message.context),
-        '--workspace', process.env.WORKSPACE_PATH || '/workspace',
-      ], {
-        cwd: process.env.WORKSPACE_PATH || '/workspace',
-      });
+    try {
+      this.logger.log('Executing instruction with ClaudeExecutorService');
       
-      let output = '';
-      let errorOutput = '';
+      // Use the ClaudeExecutorService to process the instruction
+      const result = await this.claudeExecutor.execute(
+        message.instruction,
+        message.context
+      );
       
-      this.currentProcess.stdout?.on('data', (data) => {
-        output += data.toString();
-      });
+      // Ensure result has the expected structure
+      return {
+        output: result.output || result.summary || 'Instruction processed',
+        filesChanged: result.filesChanged || [],
+        summary: result.summary || result.output,
+        success: result.success !== false,
+      };
+    } catch (error: any) {
+      // Check if it was an interruption
+      if (error.message === 'Process interrupted') {
+        throw new Error('InterruptError');
+      }
       
-      this.currentProcess.stderr?.on('data', (data) => {
-        errorOutput += data.toString();
-      });
-      
-      this.currentProcess.on('exit', (code) => {
-        if (code === 0) {
-          try {
-            resolve(JSON.parse(output));
-          } catch {
-            resolve({ output, filesChanged: [] });
-          }
-        } else if (code === 130) { // SIGINT
-          reject(new Error('InterruptError'));
-        } else {
-          reject(new Error(`Process failed: ${errorOutput}`));
-        }
-      });
-      
-      this.currentProcess.on('error', (error) => {
-        reject(error);
-      });
-    });
+      this.logger.error(`Failed to execute Claude Code: ${error.message}`);
+      throw error;
+    }
   }
 
-  private async sendResponse(response: any): Promise<void> {
+  private async sendResponse(response: ResponseMessage): Promise<void> {
     // Use QueueManagerService if available, otherwise fallback to static queue
     const queueManager = (this as any).queueManager;
     if (queueManager) {

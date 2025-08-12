@@ -14,6 +14,13 @@ import {
 import { v4 as uuidv4 } from 'uuid';
 import { GitService } from './git.service';
 import { EventEmitter } from 'events';
+import type { 
+  BaseQueueMessage, 
+  ClaimRequestMessage, 
+  WorkMessage, 
+  ResponseMessage
+} from '../types/queue-messages';
+import { isClaimRequest, isWorkMessage } from '../types/queue-messages';
 
 @Injectable()
 export class QueueManagerService extends EventEmitter {
@@ -87,9 +94,9 @@ export class QueueManagerService extends EventEmitter {
 
         if (result.Messages && result.Messages.length > 0) {
           const message = result.Messages[0];
-          const body = JSON.parse(message.Body || '{}');
+          const body: BaseQueueMessage = JSON.parse(message.Body || '{}');
           
-          if (body.type === 'claim_request') {
+          if (isClaimRequest(body)) {
             this.logger.log(`Received claim request for ${body.projectId}/${body.userId}`);
             
             // Attempt to claim the project
@@ -193,24 +200,36 @@ export class QueueManagerService extends EventEmitter {
 
         if (result.Messages && result.Messages.length > 0) {
           const message = result.Messages[0];
-          this.logger.log(`Received message from project queue`);
+          const body: BaseQueueMessage = JSON.parse(message.Body || '{}');
           
-          // Update activity timestamp
-          this.lastActivity = Date.now();
-          await this.updateActivity();
-          
-          // Emit message event for processing
-          this.emit('message', {
-            body: JSON.parse(message.Body || '{}'),
-            receiptHandle: message.ReceiptHandle,
-            queueUrl: this.inputQueueUrl,
-          });
-          
-          // Delete message from queue after processing
-          await this.sqs.send(new DeleteMessageCommand({
-            QueueUrl: this.inputQueueUrl,
-            ReceiptHandle: message.ReceiptHandle,
-          }));
+          // Only process work messages
+          if (isWorkMessage(body)) {
+            this.logger.log(`Received work message for session ${body.sessionId}`);
+            
+            // Update activity timestamp
+            this.lastActivity = Date.now();
+            await this.updateActivity();
+            
+            // Emit message event for processing
+            this.emit('message', {
+              body: body,
+              receiptHandle: message.ReceiptHandle,
+              queueUrl: this.inputQueueUrl,
+            });
+            
+            // Delete message from queue after processing
+            await this.sqs.send(new DeleteMessageCommand({
+              QueueUrl: this.inputQueueUrl,
+              ReceiptHandle: message.ReceiptHandle,
+            }));
+          } else {
+            this.logger.warn(`Received non-work message type: ${body.type}`);
+            // Delete invalid message
+            await this.sqs.send(new DeleteMessageCommand({
+              QueueUrl: this.inputQueueUrl,
+              ReceiptHandle: message.ReceiptHandle,
+            }));
+          }
         }
       } catch (error: any) {
         this.logger.error(`Error polling project queue: ${error.message}`);
@@ -228,7 +247,7 @@ export class QueueManagerService extends EventEmitter {
   /**
    * Send response to output queue
    */
-  async sendResponse(response: any): Promise<void> {
+  async sendResponse(response: ResponseMessage): Promise<void> {
     if (!this.outputQueueUrl) {
       this.logger.error('No output queue URL available');
       return;

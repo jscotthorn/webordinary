@@ -15,6 +15,8 @@ If you see "exec format error" in logs, it's an architecture mismatch.
 See README.md for full architecture details.
 
 ## 🔧 Quick Commands
+
+### Production (ECS)
 ```bash
 # Deploy to ECS
 AWS_PROFILE=personal aws ecs update-service \
@@ -27,6 +29,18 @@ AWS_PROFILE=personal aws logs tail /ecs/webordinary/edit --since 10m
 
 # Check S3 deployment
 AWS_PROFILE=personal aws s3 ls s3://edit.amelia.webordinary.com/
+```
+
+### Local Development
+```bash
+# Start with Docker Compose (from project root)
+docker compose -f docker-compose.local.yml up claude-container
+
+# View logs
+docker compose -f docker-compose.local.yml logs -f claude-container
+
+# Verify Bedrock access
+./scripts/verify-bedrock.sh
 ```
 
 ## 🧪 Testing

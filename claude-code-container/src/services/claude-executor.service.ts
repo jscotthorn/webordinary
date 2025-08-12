@@ -18,8 +18,48 @@ export class ClaudeExecutorService {
   async execute(instruction: string, context?: any): Promise<any> {
     this.logger.log(`Executing Claude Code instruction: ${instruction.substring(0, 100)}...`);
     
+    // Check if we're in simulation mode
+    const simulationMode = process.env.CLAUDE_SIMULATION_MODE === 'true' || process.env.NODE_ENV === 'development';
+    
+    if (simulationMode) {
+      this.logger.log('📝 Using simulation mode for Claude API');
+      
+      // Simulate processing the instruction
+      await new Promise(resolve => setTimeout(resolve, 2000)); // Simulate processing time
+      
+      // Create a test file to demonstrate the system works
+      const testFilePath = path.join(this.workspacePath, 'test-page.html');
+      const testContent = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Page</title>
+</head>
+<body>
+    <h1>Claude Code Simulation</h1>
+    <p>Instruction processed: ${instruction}</p>
+    <p>Generated at: ${new Date().toISOString()}</p>
+</body>
+</html>`;
+      
+      try {
+        await fs.writeFile(testFilePath, testContent);
+        this.logger.log(`Created test file: ${testFilePath}`);
+      } catch (error: any) {
+        this.logger.warn(`Failed to create test file: ${error.message}`);
+      }
+      
+      return {
+        output: `Simulated execution: ${instruction}`,
+        filesChanged: ['test-page.html'],
+        summary: 'Created a test HTML page as requested (simulation mode)',
+        success: true,
+      };
+    }
+    
     try {
-      // Execute using Claude Code CLI
+      // In production, execute using Claude Code CLI
       const { stdout, stderr } = await execAsync(
         `claude-code --instruction "${instruction}" --workspace "${this.workspacePath}"`,
         {
