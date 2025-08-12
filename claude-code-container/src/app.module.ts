@@ -6,27 +6,15 @@ import { ClaudeExecutorService } from './services/claude-executor.service';
 import { GitService } from './services/git.service';
 import { S3SyncService } from './services/s3-sync.service';
 import { CommitMessageService } from './services/commit-message.service';
+import { QueueManagerService } from './services/queue-manager.service';
 
 @Module({
   imports: [
+    // Note: SqsModule consumers/producers will be registered dynamically
+    // by QueueManagerService after claiming a project
     SqsModule.register({
-      consumers: process.env.INPUT_QUEUE_URL ? [
-        {
-          name: 'container-input',
-          queueUrl: process.env.INPUT_QUEUE_URL,
-          region: process.env.AWS_REGION || 'us-west-2',
-          batchSize: 1,
-          visibilityTimeout: 300,
-          waitTimeSeconds: 20,
-        },
-      ] : [],
-      producers: process.env.OUTPUT_QUEUE_URL ? [
-        {
-          name: 'container-output',
-          queueUrl: process.env.OUTPUT_QUEUE_URL,
-          region: process.env.AWS_REGION || 'us-west-2',
-        },
-      ] : [],
+      consumers: [],
+      producers: [],
     }),
   ],
   providers: [
@@ -35,6 +23,12 @@ import { CommitMessageService } from './services/commit-message.service';
     GitService,
     S3SyncService,
     CommitMessageService,
+    QueueManagerService,
+  ],
+  exports: [
+    QueueManagerService,
+    GitService,
+    S3SyncService,
   ],
 })
 export class AppModule {}

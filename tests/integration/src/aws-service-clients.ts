@@ -37,8 +37,11 @@ export class ECSServiceClient {
 
   constructor() {
     this.client = new ECSClient({
-      region: TEST_CONFIG.aws.region
-      // Uses default credential chain: env vars, ~/.aws/credentials, IAM roles
+      region: TEST_CONFIG.aws.region,
+      // Use profile if set in environment
+      ...(process.env.AWS_PROFILE && { 
+        credentials: undefined // Let SDK handle profile-based credentials
+      })
     });
   }
 
@@ -161,8 +164,11 @@ export class DynamoDBServiceClient {
 
   constructor() {
     this.client = new DynamoDBClient({
-      region: TEST_CONFIG.aws.region
-      // Uses default credential chain: env vars, ~/.aws/credentials, IAM roles
+      region: TEST_CONFIG.aws.region,
+      // Use profile if set in environment
+      ...(process.env.AWS_PROFILE && { 
+        credentials: undefined // Let SDK handle profile-based credentials
+      })
     });
     this.tableName = TEST_CONFIG.services.dynamoTableName;
   }
@@ -292,8 +298,11 @@ export class CloudWatchServiceClient {
 
   constructor() {
     this.client = new CloudWatchClient({
-      region: TEST_CONFIG.aws.region
-      // Uses default credential chain: env vars, ~/.aws/credentials, IAM roles
+      region: TEST_CONFIG.aws.region,
+      // Use profile if set in environment
+      ...(process.env.AWS_PROFILE && { 
+        credentials: undefined // Let SDK handle profile-based credentials
+      })
     });
   }
 
@@ -418,8 +427,11 @@ export class ALBServiceClient {
 
   constructor() {
     this.client = new ElasticLoadBalancingV2Client({
-      region: TEST_CONFIG.aws.region
-      // Uses default credential chain: env vars, ~/.aws/credentials, IAM roles
+      region: TEST_CONFIG.aws.region,
+      // Use profile if set in environment
+      ...(process.env.AWS_PROFILE && { 
+        credentials: undefined // Let SDK handle profile-based credentials
+      })
     });
   }
 

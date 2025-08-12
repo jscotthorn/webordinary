@@ -232,10 +232,19 @@ export class MessageProcessor {
   }
 
   private async sendResponse(response: any): Promise<void> {
-    await this.sqsService.send('container-output', {
-      id: response.commandId,
-      body: response,
-    });
+    // Use QueueManagerService if available, otherwise fallback to static queue
+    const queueManager = (this as any).queueManager;
+    if (queueManager) {
+      await queueManager.sendResponse(response);
+    } else if (process.env.OUTPUT_QUEUE_URL) {
+      // Fallback to static queue if configured
+      await this.sqsService.send('container-output', {
+        id: response.commandId,
+        body: response,
+      });
+    } else {
+      this.logger.warn('No output queue available for response');
+    }
   }
 
   /**
