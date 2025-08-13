@@ -8,6 +8,7 @@ import { ClaudeExecutorService } from './services/claude-executor.service';
 import { GitService } from './services/git.service';
 import { S3SyncService } from './services/s3-sync.service';
 import { CommitMessageService } from './services/commit-message.service';
+import { QueueManagerService } from './services/queue-manager.service';
 import type { WorkMessage, ResponseMessage } from './types/queue-messages';
 import { isWorkMessage } from './types/queue-messages';
 
@@ -25,6 +26,7 @@ export class MessageProcessor {
     private readonly gitService: GitService,
     private readonly s3SyncService: S3SyncService,
     private readonly commitMessageService: CommitMessageService,
+    private readonly queueManager: QueueManagerService,
   ) {
     this.workspacePath = process.env.WORKSPACE_PATH || '/workspace';
   }
@@ -166,7 +168,8 @@ export class MessageProcessor {
       // If we interrupted a build, try to sync whatever was built
       if (processName === 'npm') {
         this.logger.log('Build was interrupted, attempting S3 sync of partial build...');
-        const clientId = process.env.CLIENT_ID || process.env.DEFAULT_CLIENT_ID || 'ameliastamps';
+        const claim = this.queueManager.getCurrentClaim();
+        const clientId = claim?.projectId || 'ameliastamps';
         await this.syncToS3WithInterrupt(clientId).catch(err => 
           this.logger.warn(`Failed to sync partial build: ${err.message}`)
         );
@@ -508,9 +511,13 @@ export class MessageProcessor {
    * Get the project path for the current client/user
    */
   private getProjectPath(): string {
-    const clientId = process.env.CLIENT_ID || process.env.DEFAULT_CLIENT_ID || 'ameliastamps';
-    const userId = process.env.USER_ID || process.env.DEFAULT_USER_ID || 'scott';
-    return `${this.workspacePath}/${clientId}/${userId}/amelia-astro`;
+    const claim = this.queueManager.getCurrentClaim();
+    if (!claim) {
+      // Fallback for legacy tests or initialization
+      return `${this.workspacePath}/unclaimed/workspace/amelia-astro`;
+    }
+    const { projectId, userId } = claim;
+    return `${this.workspacePath}/${projectId}/${userId}/amelia-astro`;
   }
 
 }

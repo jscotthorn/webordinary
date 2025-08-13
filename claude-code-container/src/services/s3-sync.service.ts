@@ -1,8 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import type { QueueManagerService } from './queue-manager.service';
 
 const execAsync = promisify(exec);
 
@@ -11,14 +12,21 @@ export class S3SyncService {
   private readonly logger = new Logger(S3SyncService.name);
   private readonly workspacePath: string;
 
-  constructor() {
+  constructor(
+    @Inject(forwardRef(() => require('./queue-manager.service').QueueManagerService))
+    private readonly queueManager: QueueManagerService,
+  ) {
     this.workspacePath = process.env.WORKSPACE_PATH || '/workspace';
   }
 
   private getProjectPath(): string {
-    const clientId = process.env.CLIENT_ID || process.env.DEFAULT_CLIENT_ID || 'ameliastamps';
-    const userId = process.env.USER_ID || process.env.DEFAULT_USER_ID || 'scott';
-    return path.join(this.workspacePath, clientId, userId, 'amelia-astro');
+    const claim = this.queueManager.getCurrentClaim();
+    if (!claim) {
+      // Fallback for legacy tests or initialization
+      return path.join(this.workspacePath, 'unclaimed', 'workspace', 'amelia-astro');
+    }
+    const { projectId, userId } = claim;
+    return path.join(this.workspacePath, projectId, userId, 'amelia-astro');
   }
 
   /**
@@ -116,7 +124,11 @@ export class S3SyncService {
    * Get the S3 bucket name based on client ID
    */
   private getBucketName(clientId?: string): string {
-    const id = clientId || process.env.CLIENT_ID || process.env.DEFAULT_CLIENT_ID || 'amelia';
+    if (clientId) {
+      return `edit.${clientId}.webordinary.com`;
+    }
+    const claim = this.queueManager.getCurrentClaim();
+    const id = claim?.projectId || 'amelia';
     return `edit.${id}.webordinary.com`;
   }
 
@@ -138,7 +150,11 @@ export class S3SyncService {
    * Get the public URL for the deployed site
    */
   getDeployedUrl(clientId?: string): string {
-    const id = clientId || process.env.CLIENT_ID || process.env.DEFAULT_CLIENT_ID || 'amelia';
+    if (clientId) {
+      return `https://edit.${clientId}.webordinary.com`;
+    }
+    const claim = this.queueManager.getCurrentClaim();
+    const id = claim?.projectId || 'amelia';
     return `https://edit.${id}.webordinary.com`;
   }
 }

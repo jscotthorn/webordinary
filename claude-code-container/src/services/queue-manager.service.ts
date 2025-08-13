@@ -158,11 +158,8 @@ export class QueueManagerService extends EventEmitter {
       this.logger.log(`- Input queue: ${this.inputQueueUrl}`);
       this.logger.log(`- Output queue: ${this.outputQueueUrl}`);
       
-      // Update environment variables for other services
-      process.env.CLIENT_ID = projectId;
-      process.env.USER_ID = userId;
-      process.env.INPUT_QUEUE_URL = this.inputQueueUrl;
-      process.env.OUTPUT_QUEUE_URL = this.outputQueueUrl;
+      // Store claim info (no longer setting environment variables)
+      // Other services should call getCurrentClaim() to get this info
       
       // Update git config for this project
       try {
@@ -346,9 +343,7 @@ export class QueueManagerService extends EventEmitter {
     this.inputQueueUrl = null;
     this.outputQueueUrl = null;
     
-    // Clear environment variables
-    delete process.env.INPUT_QUEUE_URL;
-    delete process.env.OUTPUT_QUEUE_URL;
+    // State cleared (no environment variables to clean up)
   }
 
   /**
@@ -384,5 +379,15 @@ export class QueueManagerService extends EventEmitter {
    */
   getCurrentProject(): string | null {
     return this.currentProjectKey;
+  }
+
+  /**
+   * Get current claim information
+   */
+  getCurrentClaim(): { projectId: string; userId: string } | null {
+    if (!this.currentProjectKey) return null;
+    
+    const [projectId, userId] = this.currentProjectKey.split('-');
+    return { projectId, userId };
   }
 }
