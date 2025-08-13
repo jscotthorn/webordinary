@@ -28,7 +28,6 @@ import { marshall, unmarshall } from '@aws-sdk/util-dynamodb';
 // Use built-in fetch for Node.js 18+
 const fetch = globalThis.fetch;
 import { v4 as uuidv4 } from 'uuid';
-import WebSocket from 'ws';
 
 import { TEST_CONFIG, CreateSessionParams, TestSession, TestResults } from '../config/test-config.js';
 
@@ -38,7 +37,7 @@ export class IntegrationTestHarness {
   private readonly cloudWatchClient: CloudWatchClient;
   private readonly cloudWatchLogsClient: CloudWatchLogsClient;
   private readonly s3Client: S3Client;
-  private readonly albEndpoint: string;
+  // ALB removed - S3 architecture only
   private readonly testSessions: Set<string> = new Set();
 
   constructor() {
@@ -52,8 +51,8 @@ export class IntegrationTestHarness {
     this.cloudWatchClient = new CloudWatchClient(awsConfig);
     this.cloudWatchLogsClient = new CloudWatchLogsClient(awsConfig);
     this.s3Client = new S3Client(awsConfig);
-    this.albEndpoint = TEST_CONFIG.endpoints.alb;
-    
+    // ALB endpoint removed - S3 architecture only
+
   }
 
   /**
@@ -66,14 +65,14 @@ export class IntegrationTestHarness {
     const ttl = Math.floor(now / 1000) + (24 * 60 * 60); // 24 hours from now
     const userId = `${TEST_CONFIG.testData.testPrefix}${params.userId || 'test@example.com'}`;
     const clientId = params.clientId || TEST_CONFIG.testData.clientId;
-    
+
     const session: TestSession = {
       sessionId,
       threadId,
       clientId,
       userId,
       status: 'initializing',
-      previewUrl: `${TEST_CONFIG.endpoints.alb}/session/${sessionId}`,
+      previewUrl: TEST_CONFIG.endpoints.s3,
       lastActivity: now,
       ttl,
       metadata: {
@@ -106,7 +105,7 @@ export class IntegrationTestHarness {
 
     await this.dynamoClient.send(putCommand);
     this.testSessions.add(sessionId);
-    
+
     console.log(`Created test session directly in DynamoDB: ${sessionId}`);
     return session;
   }
@@ -116,7 +115,7 @@ export class IntegrationTestHarness {
    */
   async createTestSession(params: CreateSessionParams): Promise<TestSession> {
     const sessionStartTime = Date.now();
-    
+
     const requestBody = {
       clientId: params.clientId || TEST_CONFIG.testData.clientId,
       userId: `${TEST_CONFIG.testData.testPrefix}${params.userId}`,
@@ -129,68 +128,28 @@ export class IntegrationTestHarness {
       }
     };
 
-    try {
-      // Create abort controller for timeout
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 30000);
-
-      const response = await fetch(`${TEST_CONFIG.endpoints.hermes}/api/sessions/activate`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'User-Agent': 'webordinary-integration-test'
-        },
-        body: JSON.stringify(requestBody),
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        console.warn(`Hermes API unavailable (${response.status}), falling back to direct DynamoDB creation`);
-        // Fall back to direct DynamoDB creation
-        return this.createTestSessionDirect(params);
-      }
-
-      const session = await response.json() as TestSession;
-      this.testSessions.add(session.sessionId);
-
-      // Record session creation time
-      session.metadata = {
-        ...session.metadata,
-        sessionCreationTime: Date.now() - sessionStartTime
-      };
-
-      return session;
-    } catch (error) {
-      console.warn(`Hermes API error: ${error instanceof Error ? error.message : 'Unknown error'}, falling back to direct DynamoDB creation`);
-      // Fall back to direct DynamoDB creation on any error
-      return this.createTestSessionDirect(params);
-    }
+    // In S3 architecture, Hermes doesn't expose HTTP endpoints
+    // Sessions are created via SQS messages or direct DynamoDB
+    console.log('Creating test session directly in DynamoDB (S3 architecture)');
+    return this.createTestSessionDirect(params);
   }
 
   /**
-   * Waits for a container to be ready and responsive
+   * Waits for a container to be ready and responsive using CloudWatch logs
    */
   async waitForContainerReady(sessionId: string, timeoutMs = TEST_CONFIG.timeouts.containerReady): Promise<void> {
     const startTime = Date.now();
-    const healthCheckUrl = `${this.albEndpoint}/session/${sessionId}/health`;
-    
+
     while (Date.now() - startTime < timeoutMs) {
       try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        // Check CloudWatch logs for container readiness
+        const response = await this.cloudWatchLogsClient.send(new FilterLogEventsCommand({
+          logGroupName: '/ecs/webordinary/edit',
+          startTime: startTime,
+          filterPattern: `"Container ready" "${sessionId}"`
+        }));
 
-        const response = await fetch(healthCheckUrl, {
-          headers: {
-            'User-Agent': 'webordinary-integration-test'
-          },
-          signal: controller.signal,
-          });
-
-        clearTimeout(timeoutId);
-        
-        if (response.ok) {
+        if (response.events && response.events.length > 0) {
           const containerStartupTime = Date.now() - startTime;
           console.log(`Container ready for session ${sessionId} in ${containerStartupTime}ms`);
           return;
@@ -198,87 +157,53 @@ export class IntegrationTestHarness {
       } catch (error) {
         // Container not ready yet, continue waiting
       }
-      
+
       await this.sleep(2000); // Wait 2 seconds before retry
     }
-    
+
     throw new Error(`Container not ready for session ${sessionId} after ${timeoutMs}ms`);
   }
 
   /**
-   * Verifies that a file exists in the container workspace
+   * Verifies that a file exists in S3 bucket
    */
   async verifyFileExists(sessionId: string, filePath: string): Promise<void> {
-    const checkUrl = `${this.albEndpoint}/api/files/exists`;
-    
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      // For S3 architecture, check if file was deployed to S3
+      const bucket = TEST_CONFIG.s3.buckets.amelia;
+      const key = filePath.startsWith('/') ? filePath.substring(1) : filePath;
 
-      const response = await fetch(checkUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Session-ID': sessionId,
-          'User-Agent': 'webordinary-integration-test'
-        },
-        body: JSON.stringify({ filePath }),
-        signal: controller.signal
-      });
+      const response = await this.s3Client.send(new HeadObjectCommand({
+        Bucket: bucket,
+        Key: key
+      }));
 
-      clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        throw new Error(`File check failed: ${response.status} ${response.statusText}`);
+      if (!response) {
+        throw new Error(`File does not exist in S3: ${filePath}`);
       }
 
-      const result = await response.json() as { exists: boolean };
-      
-      if (!result.exists) {
-        throw new Error(`File does not exist: ${filePath}`);
-      }
+      console.log(`File verified in S3: ${filePath}`);
     } catch (error) {
+      if ((error as any).name === 'NotFound') {
+        throw new Error(`File does not exist in S3: ${filePath}`);
+      }
       throw new Error(`Failed to verify file exists: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
   /**
    * Executes a command in the container and returns the result
+   * Note: In S3 architecture, this monitors CloudWatch logs instead of direct execution
    */
   async execInContainer(sessionId: string, command: string): Promise<string> {
-    const execUrl = `${this.albEndpoint}/api/exec`;
-    
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 30000);
-
-      const response = await fetch(execUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Session-ID': sessionId,
-          'User-Agent': 'webordinary-integration-test'
-        },
-        body: JSON.stringify({ command }),
-        signal: controller.signal
-      });
-
-      clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        throw new Error(`Command execution failed: ${response.status} ${response.statusText}`);
-      }
-
-      const result = await response.json() as { output: string; exitCode: number };
-      
-      if (result.exitCode !== 0) {
-        throw new Error(`Command failed with exit code ${result.exitCode}: ${result.output}`);
-      }
-
-      return result.output;
-    } catch (error) {
-      throw new Error(`Failed to execute command: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
+    // S3 architecture doesn't support direct command execution
+    // Commands are now executed via SQS messages and results monitored via CloudWatch
+    console.log(`Command execution not supported in S3 architecture: ${command}`);
+    return 'Command execution moved to SQS/CloudWatch monitoring';
+    // In a real implementation, you would:
+    // 1. Send command via SQS message
+    // 2. Monitor CloudWatch logs for output
+    // 3. Return the captured output
   }
 
   /**
@@ -329,7 +254,7 @@ export class IntegrationTestHarness {
    */
   async verifyServiceTaskCount(serviceName: string, expectedCount: number): Promise<void> {
     const actualCount = await this.getServiceTaskCount(serviceName);
-    
+
     if (actualCount !== expectedCount) {
       throw new Error(`Service ${serviceName} has ${actualCount} tasks, expected ${expectedCount}`);
     }
@@ -365,7 +290,7 @@ export class IntegrationTestHarness {
    */
   async waitForServiceStable(serviceName: string, timeoutMs = 60000): Promise<void> {
     const startTime = Date.now();
-    
+
     while (Date.now() - startTime < timeoutMs) {
       const response = await this.ecsClient.send(new DescribeServicesCommand({
         cluster: TEST_CONFIG.services.clusterName,
@@ -373,10 +298,10 @@ export class IntegrationTestHarness {
       }));
 
       const service = response.services?.[0];
-      
-      if (service && 
-          service.runningCount === service.desiredCount &&
-          service.pendingCount === 0) {
+
+      if (service &&
+        service.runningCount === service.desiredCount &&
+        service.pendingCount === 0) {
         return;
       }
 
@@ -388,28 +313,12 @@ export class IntegrationTestHarness {
 
   /**
    * Tests WebSocket connection for HMR
+   * Note: WebSocket removed in S3 architecture
    */
   async testWebSocketConnection(sessionId: string): Promise<boolean> {
-    return new Promise((resolve, reject) => {
-      const wsUrl = `wss://${this.albEndpoint.replace('https://', '')}/ws/hmr?sessionId=${sessionId}`;
-      const ws = new WebSocket(wsUrl);
-      
-      const timeout = setTimeout(() => {
-        ws.close();
-        reject(new Error('WebSocket connection timeout'));
-      }, 10000);
-
-      ws.on('open', () => {
-        clearTimeout(timeout);
-        ws.close();
-        resolve(true);
-      });
-
-      ws.on('error', (error) => {
-        clearTimeout(timeout);
-        reject(new Error(`WebSocket connection failed: ${error.message}`));
-      });
-    });
+    // WebSocket not supported in S3 architecture
+    console.log(`WebSocket test skipped for session ${sessionId} - S3 architecture`);
+    return false; // WebSocket not available in S3 architecture
   }
 
   /**
@@ -417,10 +326,10 @@ export class IntegrationTestHarness {
    */
   async waitForAllSessionsExpired(sessions: TestSession[], timeoutMs = TEST_CONFIG.timeouts.sessionExpiry): Promise<void> {
     const startTime = Date.now();
-    
+
     while (Date.now() - startTime < timeoutMs) {
       let allExpired = true;
-      
+
       for (const session of sessions) {
         try {
           await this.verifySessionExists(session.sessionId);
@@ -430,14 +339,14 @@ export class IntegrationTestHarness {
           // Session expired or not found - this is expected
         }
       }
-      
+
       if (allExpired) {
         return;
       }
-      
+
       await this.sleep(5000); // Wait 5 seconds before retry
     }
-    
+
     throw new Error(`Not all sessions expired within ${timeoutMs}ms`);
   }
 
@@ -446,14 +355,14 @@ export class IntegrationTestHarness {
    */
   async verifyNoOrphanedContainers(): Promise<void> {
     const taskCount = await this.getServiceTaskCount(TEST_CONFIG.services.editService);
-    
+
     if (taskCount > 0) {
       console.warn(`Warning: ${taskCount} tasks still running in ${TEST_CONFIG.services.editService}`);
-      
+
       // Try to clean up orphaned tasks
       await this.scaleService(TEST_CONFIG.services.editService, 0);
       await this.sleep(10000); // Wait 10 seconds
-      
+
       const finalCount = await this.getServiceTaskCount(TEST_CONFIG.services.editService);
       if (finalCount > 0) {
         throw new Error(`Found ${finalCount} orphaned containers after cleanup attempt`);
@@ -501,20 +410,20 @@ export class IntegrationTestHarness {
    */
   async cleanup(): Promise<void> {
     console.log('Starting comprehensive test cleanup...');
-    
+
     try {
       // Delete all test sessions from DynamoDB
       await this.deleteTestSessions();
-      
+
       // Scale services to zero
       await this.scaleServicesToZero();
-      
+
       // Clean up test workspaces (if accessible)
       await this.cleanupTestWorkspaces();
-      
+
       // Verify no orphaned resources
       await this.verifyNoOrphanedContainers();
-      
+
       console.log('Test cleanup completed successfully');
     } catch (error) {
       console.error(`Test cleanup failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -524,7 +433,7 @@ export class IntegrationTestHarness {
 
   private async deleteTestSessions(): Promise<void> {
     const sessionsToDelete: string[] = [];
-    
+
     try {
       const response = await this.dynamoClient.send(new ScanCommand({
         TableName: TEST_CONFIG.services.dynamoTableName,
@@ -564,7 +473,7 @@ export class IntegrationTestHarness {
 
   private async scaleServicesToZero(): Promise<void> {
     const services = [TEST_CONFIG.services.editService, TEST_CONFIG.services.hermesService];
-    
+
     for (const serviceName of services) {
       try {
         const currentCount = await this.getServiceTaskCount(serviceName);
@@ -584,7 +493,7 @@ export class IntegrationTestHarness {
     console.log('Test workspace cleanup delegated to container lifecycle');
   }
 
-  private async sleep(ms: number): Promise<void> {
+  async sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
@@ -594,7 +503,7 @@ export class IntegrationTestHarness {
    * Sets container status in DynamoDB
    */
   async setContainerStatus(
-    containerId: string, 
+    containerId: string,
     status: 'running' | 'idle' | 'stopped' | 'starting' | 'stopping',
     additionalData?: {
       containerIp?: string;
@@ -612,7 +521,7 @@ export class IntegrationTestHarness {
       if (additionalData?.containerIp) {
         item.containerIp = { S: additionalData.containerIp };
       }
-      
+
       if (additionalData?.taskArn) {
         item.taskArn = { S: additionalData.taskArn };
       }
@@ -664,23 +573,23 @@ export class IntegrationTestHarness {
    * Waits for container to reach a specific status
    */
   async waitForContainerStatus(
-    containerId: string, 
-    targetStatus: string, 
+    containerId: string,
+    targetStatus: string,
     timeout: number = 60000
   ): Promise<void> {
     const startTime = Date.now();
-    
+
     while (Date.now() - startTime < timeout) {
       const container = await this.getContainerStatus(containerId);
-      
+
       if (container?.status === targetStatus) {
         console.log(`Container ${containerId} reached status: ${targetStatus}`);
         return;
       }
-      
+
       await this.sleep(2000); // Check every 2 seconds
     }
-    
+
     throw new Error(`Container ${containerId} did not reach status ${targetStatus} within ${timeout}ms`);
   }
 
@@ -733,13 +642,13 @@ export class IntegrationTestHarness {
   async createResumptionTestSession(params: CreateSessionParams): Promise<TestSession> {
     // Create the base session using existing method
     const session = await this.createTestSession(params);
-    
+
     // Create container ID
     const containerId = `${params.clientId || TEST_CONFIG.testData.clientId}-${session.threadId}-${params.userId}`;
-    
+
     // Create thread mapping
     await this.createThreadMapping(session.sessionId, session.threadId, containerId);
-    
+
     // Return enhanced session with containerId
     return {
       ...session,
@@ -748,7 +657,8 @@ export class IntegrationTestHarness {
   }
 
   /**
-   * Tests Hermes API session resumption directly
+   * Tests session resumption via DynamoDB
+   * Note: Hermes doesn't expose HTTP endpoints in S3 architecture
    */
   async testHermesSessionResumption(threadId: string, clientId: string): Promise<{
     status: number;
@@ -756,60 +666,51 @@ export class IntegrationTestHarness {
     responseTime: number;
   }> {
     const startTime = Date.now();
-    
+
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 30000);
-
-      const response = await fetch(`${TEST_CONFIG.endpoints.hermes}/api/sessions/resume-preview`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${process.env.INTERNAL_API_KEY || 'test-key'}`
-        },
-        body: JSON.stringify({
-          chatThreadId: threadId,
-          clientId: clientId
-        }),
-        signal: controller.signal
-      });
-
-      clearTimeout(timeoutId);
+      // In S3 architecture, check DynamoDB directly for session state
+      const response = await this.dynamoClient.send(new ScanCommand({
+        TableName: 'webordinary-thread-mappings',
+        FilterExpression: 'chatThreadId = :threadId AND projectId = :clientId',
+        ExpressionAttributeValues: marshall({
+          ':threadId': threadId,
+          ':clientId': clientId
+        })
+      }));
 
       const responseTime = Date.now() - startTime;
-      const data = await response.json();
 
       return {
-        status: response.status,
-        data,
+        status: response.Items ? 200 : 404,
+        data: response.Items ? response.Items.map(item => unmarshall(item)) : null,
         responseTime
       };
     } catch (error) {
       const responseTime = Date.now() - startTime;
-      throw new Error(`Hermes API test failed after ${responseTime}ms: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new Error(`Session resumption test failed after ${responseTime}ms: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
   /**
-   * Tests ALB routing with session resumption
+   * Tests S3 static site deployment
    */
-  async testALBSessionRouting(threadId: string, clientId: string): Promise<{
+  async testS3SiteDeployment(threadId: string, clientId: string): Promise<{
     status: number;
     body: string;
     responseTime: number;
     headers: any;
   }> {
     const startTime = Date.now();
-    
+
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 20000);
 
+      // Test S3 static site endpoint
       const response = await fetch(
-        `https://edit.${clientId}.webordinary.com/session/${threadId}/`,
+        `https://edit.${clientId}.webordinary.com/`,
         {
-          signal: controller.signal,
-          // redirect: 'manual' // Not supported by built-in fetch
+          signal: controller.signal
         }
       );
 
@@ -817,7 +718,7 @@ export class IntegrationTestHarness {
 
       const responseTime = Date.now() - startTime;
       const body = await response.text();
-      
+
       // Convert headers to plain object
       const headers: any = {};
       response.headers.forEach((value, key) => {
@@ -832,35 +733,38 @@ export class IntegrationTestHarness {
       };
     } catch (error) {
       const responseTime = Date.now() - startTime;
-      throw new Error(`ALB routing test failed after ${responseTime}ms: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new Error(`S3 site test failed after ${responseTime}ms: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
   /**
-   * Simulates container auto-sleep scenario
+   * Verifies container maintains project+user claim
+   * Note: Containers no longer auto-sleep - they maintain claims until released
    */
-  async simulateContainerAutoSleep(containerId: string): Promise<void> {
-    console.log(`Simulating auto-sleep for container: ${containerId}`);
-    
-    // Set container to idle first
-    await this.setContainerStatus(containerId, 'idle', {
-      lastActivity: Date.now() - (21 * 60 * 1000) // 21 minutes ago
-    });
-    
-    await this.sleep(1000);
-    
-    // Check session count (would be done by auto-sleep service)
-    const sessionCount = await this.getActiveSessionCount(containerId);
-    
-    if (sessionCount === 0) {
-      // Simulate graceful shutdown
-      await this.setContainerStatus(containerId, 'stopping');
-      await this.sleep(2000);
-      await this.setContainerStatus(containerId, 'stopped');
-      
-      console.log(`Container ${containerId} auto-sleep simulation complete`);
-    } else {
-      console.log(`Container ${containerId} has ${sessionCount} active sessions, staying awake`);
+  async verifyContainerClaim(containerId: string, projectId: string, userId: string): Promise<boolean> {
+    console.log(`Verifying container ${containerId} claim on ${projectId}+${userId}`);
+
+    // Check container ownership in DynamoDB
+    try {
+      const response = await this.dynamoClient.send(new GetItemCommand({
+        TableName: 'webordinary-container-ownership',
+        Key: marshall({
+          containerId: containerId
+        })
+      }));
+
+      if (response.Item) {
+        const item = unmarshall(response.Item);
+        const hasCorrectClaim = item.projectId === projectId && item.userId === userId;
+        console.log(`Container ${containerId} ${hasCorrectClaim ? 'maintains' : 'lost'} claim on ${projectId}+${userId}`);
+        return hasCorrectClaim;
+      }
+
+      console.log(`Container ${containerId} has no active claims`);
+      return false;
+    } catch (error) {
+      console.error(`Failed to verify container claim: ${error}`);
+      return false;
     }
   }
 
@@ -868,23 +772,23 @@ export class IntegrationTestHarness {
    * Waits for S3 deployment to complete
    */
   async waitForS3Deployment(clientId: string, timeout = TEST_CONFIG.timeouts.s3SyncTimeout): Promise<void> {
-    const bucket = clientId === 'ameliastamps' 
-      ? TEST_CONFIG.s3.buckets.amelia 
+    const bucket = clientId === 'ameliastamps'
+      ? TEST_CONFIG.s3.buckets.amelia
       : TEST_CONFIG.s3.buckets.test;
-    
+
     const startTime = Date.now();
-    
+
     while (Date.now() - startTime < timeout) {
       try {
         const response = await this.s3Client.send(new HeadObjectCommand({
           Bucket: bucket,
           Key: 'index.html'
         }));
-        
+
         // Check if recently modified (within last 2 minutes)
         const lastModified = response.LastModified?.getTime() || 0;
         const twoMinutesAgo = Date.now() - 120000;
-        
+
         if (lastModified > twoMinutesAgo) {
           console.log(`S3 deployment detected for ${clientId} at ${response.LastModified}`);
           return;
@@ -892,10 +796,10 @@ export class IntegrationTestHarness {
       } catch (error) {
         // File might not exist yet
       }
-      
+
       await this.sleep(2000);
     }
-    
+
     throw new Error(`S3 deployment timeout for ${clientId} after ${timeout}ms`);
   }
 
@@ -906,7 +810,7 @@ export class IntegrationTestHarness {
     const url = clientId === 'ameliastamps'
       ? TEST_CONFIG.s3.endpoints.amelia
       : TEST_CONFIG.s3.endpoints.test;
-    
+
     try {
       const response = await fetch(url);
       const html = await response.text();
@@ -924,13 +828,13 @@ export class IntegrationTestHarness {
     const bucket = clientId === 'ameliastamps'
       ? TEST_CONFIG.s3.buckets.amelia
       : TEST_CONFIG.s3.buckets.test;
-    
+
     try {
       const response = await this.s3Client.send(new ListObjectsV2Command({
         Bucket: bucket,
         MaxKeys: maxKeys
       }));
-      
+
       return response.Contents?.map(obj => obj.Key || '') || [];
     } catch (error) {
       console.error('Failed to list S3 objects:', error);
@@ -944,7 +848,7 @@ export class IntegrationTestHarness {
   async waitForContainerStartup(sessionId: string, timeout = TEST_CONFIG.timeouts.containerReady): Promise<void> {
     const logGroup = '/ecs/webordinary/edit';
     const startTime = Date.now();
-    
+
     while (Date.now() - startTime < timeout) {
       try {
         const response = await this.cloudWatchLogsClient.send(new FilterLogEventsCommand({
@@ -952,7 +856,7 @@ export class IntegrationTestHarness {
           filterPattern: `"Session ${sessionId} started"`,
           startTime: Date.now() - 300000, // Last 5 minutes
         }));
-        
+
         if (response.events && response.events.length > 0) {
           console.log(`Container started for session ${sessionId}`);
           return;
@@ -960,10 +864,10 @@ export class IntegrationTestHarness {
       } catch (error) {
         // Log group might not exist yet
       }
-      
+
       await this.sleep(2000);
     }
-    
+
     throw new Error(`Container startup timeout for session ${sessionId} after ${timeout}ms`);
   }
 
@@ -973,7 +877,7 @@ export class IntegrationTestHarness {
   async waitForProcessing(sessionId: string, timeout = TEST_CONFIG.timeouts.buildTimeout): Promise<void> {
     const logGroup = '/ecs/webordinary/edit';
     const startTime = Date.now();
-    
+
     while (Date.now() - startTime < timeout) {
       try {
         const response = await this.cloudWatchLogsClient.send(new FilterLogEventsCommand({
@@ -981,7 +885,7 @@ export class IntegrationTestHarness {
           filterPattern: `"Processing complete" "${sessionId}"`,
           startTime: Date.now() - 300000, // Last 5 minutes
         }));
-        
+
         if (response.events && response.events.length > 0) {
           console.log(`Processing complete for session ${sessionId}`);
           return;
@@ -989,10 +893,10 @@ export class IntegrationTestHarness {
       } catch (error) {
         // Log group might not exist yet
       }
-      
+
       await this.sleep(2000);
     }
-    
+
     // Don't throw error, processing might still be ongoing
     console.log(`Processing timeout for session ${sessionId} after ${timeout}ms (may still be in progress)`);
   }

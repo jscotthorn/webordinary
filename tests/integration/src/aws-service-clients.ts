@@ -180,7 +180,7 @@ export class DynamoDBServiceClient {
       clientId: session.clientId,
       threadId: session.threadId,
       status: session.status,
-      previewUrl: session.previewUrl || `${TEST_CONFIG.endpoints.alb}/session/${session.sessionId}`,
+      previewUrl: session.previewUrl || TEST_CONFIG.endpoints.s3,
       lastActivity: session.lastActivity,
       ttl: session.ttl,
       metadata: session.metadata

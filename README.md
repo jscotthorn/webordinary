@@ -159,10 +159,10 @@ AWS_PROFILE=personal aws ecs update-service \
 - **ECS/Fargate**: $0 idle, ~$0.10/hour active
 - **DynamoDB**: ~$1/month
 - **SQS**: <$1/month
-- **ALB**: $18-20/month (shared)
 - **Route53**: $0.50/month
-- **Total Idle**: ~$25-30/month
-- **Total Active (10hrs)**: ~$28-35/month
+- **S3 Static Hosting**: ~$1-2/month
+- **Total Idle**: ~$5-10/month
+- **Total Active (10hrs)**: ~$10-15/month
 
 ## 🔧 Monitoring
 
@@ -194,7 +194,7 @@ AWS_PROFILE=personal aws sqs get-queue-attributes \
 ## 📋 Sprint Status
 
 ### Completed
-- ✅ **Sprint 1**: Core infrastructure (ECR, EFS, ALB, Fargate)
+- ✅ **Sprint 1**: Core infrastructure (ECR, EFS, Fargate)
 - ✅ **Sprint 3**: Amelia Astro dual deployment
 - ✅ **Sprint 4**: Multi-session SQS architecture (85%)
 - ✅ **Sprint 6**: S3 static hosting migration

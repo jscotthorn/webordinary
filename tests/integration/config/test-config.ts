@@ -174,8 +174,7 @@ export interface TestReport {
 export function validateTestConfig(): void {
   const required = [
     'AWS_REGION',
-    'AWS_ACCOUNT_ID', 
-    'ALB_ENDPOINT'
+    'AWS_ACCOUNT_ID'
   ];
 
   const missing = required.filter(env => !process.env[env] && !getConfigValue(env));
@@ -188,8 +187,7 @@ export function validateTestConfig(): void {
 function getConfigValue(key: string): string | undefined {
   const configMap: Record<string, string> = {
     'AWS_REGION': TEST_CONFIG.aws.region,
-    'AWS_ACCOUNT_ID': TEST_CONFIG.aws.account,
-    'ALB_ENDPOINT': TEST_CONFIG.endpoints.alb
+    'AWS_ACCOUNT_ID': TEST_CONFIG.aws.account
   };
   
   return configMap[key];
