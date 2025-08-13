@@ -4,17 +4,18 @@ This is the Claude Code container that processes SQS messages, builds Astro site
 
 ## Architecture
 
-The container uses NestJS with `@ssut/nestjs-sqs` for message handling and deploys to S3:
+The container uses NestJS with project+user ownership pattern:
 
-- **SQS Message Processing**: Receives instructions via SQS queues
+- **Project+User Claims**: Container claims work for specific project+user combinations
+- **SQS Message Processing**: Monitors unclaimed queue, then switches to project queues
 - **S3 Static Hosting**: Builds and deploys sites directly to S3 buckets
-- **No Web Server**: Container no longer serves web traffic (removed port 8080)
+- **No Web Server**: Container doesn't serve HTTP (no port 8080)
 - **Git Branch Management**: Automatically switches branches based on chat thread ID
 - **Automatic S3 Sync**: Deploys to S3 after each build
 
 ## Environment Variables
 
-Create a `.env.local` file (see `.env.local` example in repo):
+Create a `.env.local` file (see `.env.local.example` in repo):
 
 ```bash
 # AWS Configuration
@@ -23,23 +24,21 @@ AWS_REGION=us-west-2
 AWS_ACCOUNT_ID=942734823970
 
 # S3 Configuration
-CLIENT_ID=amelia
-S3_BUCKET_NAME=edit.amelia.webordinary.com
+S3_BUCKET_PREFIX=edit  # Bucket pattern: {prefix}.{projectId}.webordinary.com
 
-# SQS Configuration (optional for local testing)
-INPUT_QUEUE_URL=https://sqs.us-west-2.amazonaws.com/942734823970/webordinary-email-queue
-OUTPUT_QUEUE_URL=https://sqs.us-west-2.amazonaws.com/942734823970/webordinary-email-dlq
+# Queue Configuration
+UNCLAIMED_QUEUE_URL=https://sqs.us-west-2.amazonaws.com/942734823970/webordinary-unclaimed
+OWNERSHIP_TABLE_NAME=webordinary-container-ownership
 
 # Container configuration
-WORKSPACE_PATH=/workspace/amelia-astro
-DEFAULT_CLIENT_ID=amelia
-DEFAULT_USER_ID=scott
+WORKSPACE_PATH=/workspace
 
 # GitHub Configuration
 GITHUB_TOKEN=your-github-personal-access-token
 
-# Claude Configuration
-ANTHROPIC_API_KEY=your-anthropic-api-key  # Or 'simulation-key' for testing
+# Claude Configuration (Bedrock)
+CLAUDE_CODE_USE_BEDROCK=1
+CLAUDE_CODE_MAX_OUTPUT_TOKENS=4096
 ```
 
 ## Message Schema
@@ -179,14 +178,15 @@ npm run dev
 - **Instant Updates**: S3 sync provides immediate site updates
 
 ### Git Integration
-- **Branch per Session**: Each chat thread gets branch `thread-{chatThreadId}`
-- **Auto-commits**: Before switching sessions or on interrupts
+- **Branch per Thread**: Each email conversation gets branch `thread-{chatThreadId}`
+- **Auto-commits**: Before switching threads or on interrupts
 - **Push to Remote**: Commits are pushed to GitHub after changes
 - **Improved Commit Messages**: Includes instruction context
 
-### Session Management
-- **Multi-Session Support**: Handle multiple chat sessions in one container
-- **Session Persistence**: Work preserved across session switches
+### Project+User Ownership
+- **Container Claims**: One container per project+user combination
+- **Multi-Thread Support**: Handle multiple email threads for same project+user
+- **Thread Persistence**: Work preserved across thread switches
 - **Automatic Branch Switching**: Based on chat thread ID
 - **Conflict Resolution**: Handles merge conflicts gracefully
 
