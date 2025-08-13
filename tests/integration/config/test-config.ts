@@ -11,9 +11,8 @@ export interface TestConfig {
     dynamoTableName: string;
   };
   endpoints: {
-    alb: string;
-    hermes: string;
-    api: string;
+    // ALB removed - S3 architecture only
+    s3: string;
   };
   s3: {
     buckets: {
@@ -41,7 +40,7 @@ export interface TestConfig {
   };
   resources: {
     efsFileSystemId: string;
-    albListenerArn: string;
+    // ALB removed - no listener needed
     vpcId?: string;
   };
   containerHealthCheck: string;
@@ -60,9 +59,8 @@ export const TEST_CONFIG: TestConfig = {
     dynamoTableName: 'webordinary-edit-sessions'
   },
   endpoints: {
-    alb: process.env.ALB_ENDPOINT || 'https://webordinary-edit-alb-916355172.us-west-2.elb.amazonaws.com',
-    hermes: process.env.HERMES_ENDPOINT || 'https://webordinary-edit-alb-916355172.us-west-2.elb.amazonaws.com/hermes',
-    api: process.env.API_ENDPOINT || 'https://webordinary-edit-alb-916355172.us-west-2.elb.amazonaws.com/api'
+    // ALB removed - S3 architecture only
+    s3: process.env.S3_ENDPOINT || 'https://edit.amelia.webordinary.com'
   },
   s3: {
     buckets: {
@@ -90,7 +88,7 @@ export const TEST_CONFIG: TestConfig = {
   },
   resources: {
     efsFileSystemId: process.env.EFS_FILE_SYSTEM_ID || 'fs-0ab7a5e03c0dc5bfd',
-    albListenerArn: process.env.ALB_LISTENER_ARN || 'arn:aws:elasticloadbalancing:us-west-2:942734823970:listener/app/webordinary-edit-alb/916355172/f8c5e5b1234567890',
+    // ALB removed - no listener needed
     vpcId: process.env.VPC_ID
   },
   containerHealthCheck: 'cloudwatch-logs'

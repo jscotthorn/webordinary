@@ -117,49 +117,42 @@ describe('Infrastructure Validation', () => {
     });
   });
 
-  describe('ALB Endpoint Connectivity', () => {
-    test('should reach ALB health check endpoint', async () => {
-      const healthUrl = `${global.testConfig.endpoints.alb}/health`;
+  describe('S3 Endpoint Connectivity', () => {
+    test('should reach S3 static site endpoint', async () => {
+      const s3Url = global.testConfig.s3.endpoints.amelia;
       
       try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 10000);
         
-        const response = await fetch(healthUrl, {
+        const response = await fetch(s3Url, {
           headers: {
             'User-Agent': 'webordinary-integration-test-infrastructure-validation'
           },
-          signal: controller.signal,
-          // @ts-ignore - Allow self-signed or mismatched certificates for testing
-          agent: new (await import('https')).Agent({
-            rejectUnauthorized: false
-          })
+          signal: controller.signal
         });
         
         clearTimeout(timeoutId);
 
-        // We expect this might return 404 or 503 if no services are running
-        // The important thing is that we get a response from the ALB
-        expect([200, 404, 503, 502]).toContain(response.status);
+        // S3 static site should return 200 or 404 (if no index.html)
+        expect([200, 404, 403]).toContain(response.status);
         
-        console.log(`✅ ALB health check responded with status: ${response.status}`);
+        console.log(`✅ S3 static site responded with status: ${response.status}`);
       } catch (error) {
         if (error instanceof Error && error.message.includes('timeout')) {
-          throw new Error('ALB endpoint is not reachable - check network connectivity');
+          throw new Error('S3 endpoint is not reachable - check static hosting configuration');
         }
         throw error;
       }
     });
 
-    test('should validate ALB endpoints configuration', () => {
-      expect(global.testConfig.endpoints.alb).toMatch(/^https:\/\/.+/);
-      expect(global.testConfig.endpoints.hermes).toMatch(/^https:\/\/.+\/hermes$/);
-      expect(global.testConfig.endpoints.api).toMatch(/^https:\/\/.+\/api$/);
+    test('should validate S3 endpoints configuration', () => {
+      expect(global.testConfig.s3.endpoints.amelia).toMatch(/^https?:\/\/.+/);
+      expect(global.testConfig.s3.buckets.amelia).toBe('edit.amelia.webordinary.com');
 
-      console.log(`✅ ALB endpoints configured:`);
-      console.log(`  ALB: ${global.testConfig.endpoints.alb}`);
-      console.log(`  Hermes: ${global.testConfig.endpoints.hermes}`);
-      console.log(`  API: ${global.testConfig.endpoints.api}`);
+      console.log(`✅ S3 endpoints configured:`);
+      console.log(`  S3 Bucket: ${global.testConfig.s3.buckets.amelia}`);
+      console.log(`  S3 Endpoint: ${global.testConfig.s3.endpoints.amelia}`);
     });
   });
 

@@ -164,12 +164,12 @@ describe('05 - Session Resumption Integration Tests', () => {
     });
   });
 
-  describe('ALB Routing with Container Wake', () => {
-    it('should trigger container wake via ALB preview URL', async () => {
+  describe('Queue-Based Container Claiming', () => {
+    it('should claim work from unclaimed queue', async () => {
       const session = await testHarness.createResumptionTestSession({
-        clientId: 'albtest',
-        userId: 'integration-test',
-        instruction: 'ALB routing test'
+        clientId: 'amelia',
+        userId: 'scott',
+        instruction: 'Test S3 deployment'
       });
 
       // Set container as stopped
@@ -178,19 +178,19 @@ describe('05 - Session Resumption Integration Tests', () => {
       const startTime = Date.now();
       
       try {
-        // Access preview URL via ALB
-        const response = await fetch(
-          `https://edit.${session.clientId}.webordinary.com/session/${session.threadId}/`,
-          {
-            // timeout handled by AbortController
-            redirect: 'manual' // Don't follow redirects
-          }
-        );
+        // Send message to unclaimed queue
+        const message = await testHarness.sendToUnclaimedQueue({
+          projectId: session.clientId,
+          userId: session.userId,
+          instruction: 'Deploy test page',
+          threadId: session.threadId
+        });
 
         const responseTime = Date.now() - startTime;
 
-        // Should either show "container starting" page (202) or route successfully (200/502)
-        expect([200, 202, 502, 503]).toContain(response.status);
+        // Message should be processed
+        expect(message).toBeDefined();
+        expect(message.MessageId).toBeDefined();
 
         if (response.status === 202 || response.status === 503) {
           // Container starting page
@@ -199,13 +199,14 @@ describe('05 - Session Resumption Integration Tests', () => {
           expect(body).toContain(session.threadId);
           expect(response.headers.get('retry-after')).toBeDefined();
           
-          console.log(`   🔄 Container wake triggered via ALB (${responseTime}ms)`);
+          console.log(`   🔄 Message sent to unclaimed queue (${responseTime}ms)`);
           
           // Wait a bit and try again to see if container woke up
           await new Promise(resolve => setTimeout(resolve, 5000));
           
-          const retryResponse = await fetch(
-            `https://edit.${session.clientId}.webordinary.com/session/${session.threadId}/`,
+          // Check S3 for deployment
+          const s3Response = await fetch(
+            `https://edit.${session.clientId}.webordinary.com/`,
             {
               // timeout handled by AbortController
             }
