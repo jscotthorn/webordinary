@@ -21,17 +21,9 @@ async function bootstrap() {
   const queueManager = app.get(QueueManagerService);
   const messageProcessor = app.get(MessageProcessor);
 
-  // Initialize git repository if needed
-  const repoUrl = process.env.REPO_URL;
-  if (repoUrl) {
-    logger.log(`Initializing repository from ${repoUrl}`);
-    try {
-      await gitService.initRepository(repoUrl);
-    } catch (error: any) {
-      logger.error(`Failed to initialize repository: ${error.message}`);
-      logger.warn('Continuing without repository - will initialize when needed');
-    }
-  }
+  // Repository initialization removed - will be handled per message
+  // Containers are now generic and claim work dynamically
+  // Repository URL comes from work messages, not environment
 
   // Check AWS CLI availability
   const hasAwsCli = await s3SyncService.checkAwsCli();
