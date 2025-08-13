@@ -1,0 +1,81 @@
+services:
+  hermes:
+    build:
+      context: ./hermes
+      dockerfile: Dockerfile
+      # Use production stage (no development stage available)
+    env_file:
+      - ./hermes/.env.local
+    volumes:
+      - ./hermes:/app
+      - ~/.aws:/home/hermes/.aws:ro
+    ports:
+      - "3000:3000"
+    networks:
+      - webordinary-local
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/hermes/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    environment:
+      - NODE_ENV=development
+      - AWS_PROFILE=personal
+      - AWS_REGION=us-west-2
+
+  claude-container:
+    build:
+      context: ./claude-code-container
+      dockerfile: Dockerfile
+      # No platform specified - uses native for local dev
+    env_file:
+      - ./claude-code-container/.env.local
+    # Use local entrypoint that skips AWS CLI check but runs the app
+    entrypoint: ["/app/scripts/entrypoint-local.sh"]
+    volumes:
+      # Main workspace for Astro projects
+      - ./claude-code-container/workspace:/workspace
+      # AWS credentials for Bedrock and S3
+      - ~/.aws:/home/appuser/.aws:ro
+      # Mount local scripts for development
+      - ./claude-code-container/scripts:/app/scripts:ro
+    networks:
+      - webordinary-local
+    depends_on:
+      hermes:
+        condition: service_healthy
+    environment:
+      - CLAUDE_CODE_USE_BEDROCK=1
+      - AWS_REGION=us-west-2
+      - AWS_PROFILE=personal
+      - NODE_ENV=development
+    # No ports exposed since S3 deployment model (no web server)
+    # Health check via script since no HTTP endpoint
+    healthcheck:
+      test: ["CMD", "/app/scripts/health-check-bedrock.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Optional: LocalStack for fully offline development
+  # Uncomment to use LocalStack instead of real AWS services
+  # localstack:
+  #   image: localstack/localstack:latest
+  #   ports:
+  #     - "4566:4566"
+  #   environment:
+  #     - SERVICES=dynamodb,sqs,s3,bedrock
+  #     - DEBUG=1
+  #     - DATA_DIR=/tmp/localstack/data
+  #   volumes:
+  #     - localstack-data:/tmp/localstack
+  #   networks:
+  #     - webordinary-local
+
+networks:
+  webordinary-local:
+    driver: bridge
+
+volumes:
+  # For LocalStack persistence if enabled
+  localstack-data:
