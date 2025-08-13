@@ -1,10 +1,11 @@
 # WebOrdinary Quick Reference
 
-## 🚨 CRITICAL: S3 Architecture (Sprint 6/7)
+## 🚨 CRITICAL: Current Architecture (Sprint 7+)
 - **NO WEB SERVERS**: Containers don't serve HTTP (removed port 8080)
 - **S3 DEPLOYMENT**: All sites served from S3 buckets
 - **CLOUDWATCH HEALTH**: No HTTP health checks, use logs
 - **BUILD → S3 SYNC**: Every message triggers Astro build and S3 deployment
+- **PROJECT+USER PATTERN**: One container per project+user (NOT per session)
 
 ## 📍 Project Structure
 ```
@@ -113,13 +114,27 @@ AWS_PROFILE=personal aws sqs get-queue-attributes \
   --attribute-names ApproximateNumberOfMessages
 ```
 
+## 📝 Key Terminology & Concepts
+
+### Entity Hierarchy
+- **Client**: Account holder (future concept, e.g., "Amelia Stamps Inc")
+- **Project**: Specific website/application (e.g., "amelia" for the Astro site)
+- **User**: Email address working on projects (e.g., escottster@gmail.com)
+- **Session**: Email thread mapped to git branch `thread-{chatThreadId}`
+
+### Container Ownership
+- **Project+User**: Containers claim "amelia+escottster@gmail.com" combos
+- **NOT Session-based**: One container handles all sessions for a project+user
+- **Unclaimed Queue**: Available work for warm containers without claims
+
 ## 📝 Key Points
 1. **Use AWS_PROFILE=personal** for all AWS commands
 2. **Always build with `--platform linux/amd64`** for ECS
-3. **S3 bucket**: `edit.amelia.webordinary.com` is primary
-4. **Git branches**: `thread-{chatThreadId}` per session
+3. **S3 bucket**: `edit.{projectId}.webordinary.com` pattern
+4. **Git branches**: `thread-{chatThreadId}` per email conversation
 5. **Scale to 0** when not in use (saves ~$15/month)
 6. **Tests need `.env.local`** with AWS credentials
+7. **No env vars**: Services use QueueManager.getCurrentClaim() not CLIENT_ID
 
 ## 🐛 Common Fixes
 - **Exec format error**: Add `--platform linux/amd64` to Docker build
