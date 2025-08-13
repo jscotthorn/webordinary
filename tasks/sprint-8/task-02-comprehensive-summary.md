@@ -130,7 +130,7 @@ Email → Hermes → SQS Router → Project Queue → Container (claimed) → S3
 
 ### Ready for Testing
 The system is fully deployed and ready for end-to-end testing:
-1. Send email to `edit@webordinary.com`
+1. Send email to `buddy@webordinary.com`
 2. Message routes through queues
 3. Container claims project and processes
 4. Changes deployed to S3

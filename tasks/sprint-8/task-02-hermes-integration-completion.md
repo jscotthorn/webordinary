@@ -103,7 +103,7 @@ AWS_PROFILE=personal aws ecs update-service \
    ```
 
 3. **Send Test Email**:
-   - Send to: edit@webordinary.com
+   - Send to: buddy@webordinary.com
    - From: escottster@gmail.com
    - Subject: Test queue routing
    - Body: Update the homepage title

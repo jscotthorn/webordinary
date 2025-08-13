@@ -5,20 +5,20 @@
  * Email → Hermes → Project Queue → Container Claim → S3 Deployment
  */
 
-import { 
-  SQSClient, 
-  SendMessageCommand, 
+import {
+  SQSClient,
+  SendMessageCommand,
   ReceiveMessageCommand,
-  GetQueueAttributesCommand 
+  GetQueueAttributesCommand
 } from '@aws-sdk/client-sqs';
-import { 
-  DynamoDBClient, 
+import {
+  DynamoDBClient,
   GetItemCommand,
-  PutItemCommand 
+  PutItemCommand
 } from '@aws-sdk/client-dynamodb';
-import { 
-  S3Client, 
-  HeadObjectCommand 
+import {
+  S3Client,
+  HeadObjectCommand
 } from '@aws-sdk/client-s3';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -53,7 +53,7 @@ describe('Queue-Based Communication Flow', () => {
         MaxNumberOfMessages: 10,
         WaitTimeSeconds: 5,
       }));
-      
+
       if (result.Messages && result.Messages.length > 0) {
         return JSON.parse(result.Messages[0].Body || '{}');
       }
@@ -78,13 +78,13 @@ describe('Queue-Based Communication Flow', () => {
     test('should route email through queues to container and deploy', async () => {
       const sessionId = `test-${uuidv4()}`;
       const threadId = `thread-${uuidv4()}`;
-      
+
       // Step 1: Simulate email arrival
       console.log('Step 1: Sending simulated email to queue...');
       const emailMessage = {
         messageId: uuidv4(),
         content: `From: escottster@gmail.com
-To: edit@webordinary.com
+To: buddy@webordinary.com
 Subject: Test deployment
 Message-ID: <${threadId}@webordinary.com>
 
@@ -100,14 +100,14 @@ Update the homepage title to "Test Deployment ${Date.now()}"`,
       // Step 2: Verify Hermes routes to project queue
       console.log('Step 2: Waiting for message in project queue...');
       const projectMessage = await waitForMessage(queueUrls.input);
-      
+
       if (projectMessage) {
         expect(projectMessage.projectId).toBe(config.projectId);
         expect(projectMessage.userId).toBe(config.userId);
         console.log('✅ Message routed to project queue');
       } else {
         console.log('⚠️ Message not found in project queue, checking unclaimed...');
-        
+
         // Check if it went to unclaimed queue
         const unclaimedMessage = await waitForMessage(queueUrls.unclaimed, 10000);
         if (unclaimedMessage) {
@@ -119,7 +119,7 @@ Update the homepage title to "Test Deployment ${Date.now()}"`,
       // Step 3: Check container ownership
       console.log('Step 3: Checking container ownership...');
       const hasOwner = await checkOwnership(config.projectId, config.userId);
-      
+
       if (hasOwner) {
         console.log('✅ Container has claimed ownership');
       } else {
@@ -129,7 +129,7 @@ Update the homepage title to "Test Deployment ${Date.now()}"`,
       // Step 4: Wait for response in output queue
       console.log('Step 4: Waiting for response in output queue...');
       const response = await waitForMessage(queueUrls.output, 40000);
-      
+
       if (response) {
         expect(response.success).toBeDefined();
         console.log(`✅ Response received: ${response.success ? 'Success' : 'Failed'}`);
@@ -143,13 +143,13 @@ Update the homepage title to "Test Deployment ${Date.now()}"`,
       // Step 5: Verify S3 deployment
       console.log('Step 5: Checking S3 deployment...');
       const bucketName = `edit.${config.projectId}.webordinary.com`;
-      
+
       try {
         const s3Result = await s3Client.send(new HeadObjectCommand({
           Bucket: bucketName,
           Key: 'index.html',
         }));
-        
+
         const isRecent = (Date.now() - s3Result.LastModified!.getTime()) < 300000; // 5 minutes
         if (isRecent) {
           console.log('✅ S3 deployment successful and recent');
@@ -183,7 +183,7 @@ Update the homepage title to "Test Deployment ${Date.now()}"`,
       console.log('Step 2: Waiting for container to claim...');
       let claimed = false;
       const startTime = Date.now();
-      
+
       while (!claimed && Date.now() - startTime < 20000) {
         claimed = await checkOwnership(config.projectId, config.userId);
         if (!claimed) {
@@ -194,14 +194,14 @@ Update the homepage title to "Test Deployment ${Date.now()}"`,
       expect(claimed).toBe(true);
       if (claimed) {
         console.log('✅ Container successfully claimed ownership');
-        
+
         // Get ownership details
         const projectKey = `${config.projectId}#${config.userId}`;
         const ownershipResult = await dynamoClient.send(new GetItemCommand({
           TableName: 'webordinary-container-ownership',
           Key: { projectKey: { S: projectKey } },
         }));
-        
+
         if (ownershipResult.Item) {
           console.log(`   Container ID: ${ownershipResult.Item.containerId?.S}`);
           console.log(`   Status: ${ownershipResult.Item.status?.S}`);
@@ -216,7 +216,7 @@ Update the homepage title to "Test Deployment ${Date.now()}"`,
     test('should process instruction and return response', async () => {
       const commandId = uuidv4();
       const sessionId = `test-${uuidv4()}`;
-      
+
       // Step 1: Send instruction to project queue
       console.log('Step 1: Sending instruction to project queue...');
       const instruction = {
@@ -238,14 +238,14 @@ Update the homepage title to "Test Deployment ${Date.now()}"`,
       console.log('Step 2: Waiting for processing response...');
       const startTime = Date.now();
       let response = null;
-      
+
       while (!response && Date.now() - startTime < 30000) {
         const result = await sqsClient.send(new ReceiveMessageCommand({
           QueueUrl: queueUrls.output,
           MaxNumberOfMessages: 10,
           WaitTimeSeconds: 5,
         }));
-        
+
         if (result.Messages) {
           for (const message of result.Messages) {
             const body = JSON.parse(message.Body || '{}');
@@ -273,19 +273,19 @@ Update the homepage title to "Test Deployment ${Date.now()}"`,
   describe('Queue Metrics', () => {
     test('should check queue depths and DLQ', async () => {
       console.log('Checking queue metrics...');
-      
+
       for (const [name, url] of Object.entries(queueUrls)) {
         try {
           const result = await sqsClient.send(new GetQueueAttributesCommand({
             QueueUrl: url,
             AttributeNames: ['ApproximateNumberOfMessages', 'ApproximateNumberOfMessagesNotVisible'],
           }));
-          
+
           const messages = parseInt(result.Attributes?.ApproximateNumberOfMessages || '0');
           const inFlight = parseInt(result.Attributes?.ApproximateNumberOfMessagesNotVisible || '0');
-          
+
           console.log(`${name} queue: ${messages} messages, ${inFlight} in flight`);
-          
+
           // Warn if queues are backing up
           if (messages > 10) {
             console.warn(`⚠️ ${name} queue has ${messages} messages backed up`);

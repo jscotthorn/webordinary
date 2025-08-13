@@ -1,66 +1,39 @@
-# Claude Development Notes
+# Container Quick Reference
 
-## 🚨 CRITICAL: Always Build for linux/amd64
+**Build**: `docker build --platform linux/amd64 -t webordinary/claude-code .`
+**Deploy**: `./build-and-push.sh`
+
+## Critical
+- No HTTP server (removed port 8080)
+- S3 deployment only: `edit.{projectId}.webordinary.com`
+- Project+user claiming (not session-based)
+- Branch per thread: `thread-{chatThreadId}`
+
+## Commands
 ```bash
-docker build --platform linux/amd64 -t webordinary/claude-code-astro:latest .
-```
-If you see "exec format error" in logs, it's an architecture mismatch.
+# Logs
+AWS_PROFILE=personal aws logs tail /ecs/webordinary/edit --since 10m
 
-## 📦 Current Architecture (S3 Deployment)
-- **NO WEB SERVER**: Container doesn't serve HTTP (removed port 8080)
-- **S3 DEPLOYMENT**: Builds Astro → Syncs to S3 bucket
-- **SQS PROCESSING**: Receives messages, processes, deploys
-- **CLOUDWATCH HEALTH**: No HTTP health checks, use logs
-
-See README.md for full architecture details.
-
-## 🔧 Quick Commands
-
-### Production (ECS)
-```bash
-# Deploy to ECS
+# Scale
 AWS_PROFILE=personal aws ecs update-service \
   --cluster webordinary-edit-cluster \
   --service webordinary-edit-service \
-  --force-new-deployment
+  --desired-count 1
 
-# View logs
-AWS_PROFILE=personal aws logs tail /ecs/webordinary/edit --since 10m
-
-# Check S3 deployment
+# Check S3
 AWS_PROFILE=personal aws s3 ls s3://edit.amelia.webordinary.com/
 ```
 
-### Local Development
+## Environment
 ```bash
-# Start with Docker Compose (from project root)
-docker compose -f docker-compose.local.yml up claude-container
-
-# View logs
-docker compose -f docker-compose.local.yml logs -f claude-container
-
-# Verify Bedrock access
-./scripts/verify-bedrock.sh
+UNCLAIMED_QUEUE_URL  # Queue for available work
+GITHUB_TOKEN         # Required for git operations
+# No CLIENT_ID, REPO_URL, DEFAULT_USER_ID
 ```
 
-## 🧪 Testing
-```bash
-# Tests use .env.local automatically
-npm test all              # All tests
-npm test container        # Quick container test
-```
+## Fixes
+- Exec format error → Add `--platform linux/amd64`
+- S3 sync fails → Check AWS credentials
+- Not claiming → Check unclaimed queue
 
-## 📝 Key Points
-1. **Use AWS_PROFILE=personal** for all AWS commands
-2. **Tests need GITHUB_TOKEN** in .env.local
-3. **S3 bucket**: `edit.amelia.webordinary.com`
-4. **No ALB routing** to containers for web traffic
-5. **Git branches**: `thread-{chatThreadId}` per session
-
-## 🐛 Common Fixes
-- **Docker build fails**: Add `--platform linux/amd64`
-- **Tests fail**: Check .env.local has GITHUB_TOKEN
-- **No S3 updates**: Verify AWS credentials
-- **Architecture errors**: Always use platform flag
-
-See README.md for detailed troubleshooting.
+See [README.md](README.md) for full documentation.

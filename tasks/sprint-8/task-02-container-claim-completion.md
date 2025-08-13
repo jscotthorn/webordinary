@@ -86,7 +86,7 @@ After 30min Idle → Release & Return to Unclaimed
    ```
 
 ### Testing Steps
-1. Send email to edit@webordinary.com
+1. Send email to buddy@webordinary.com
 2. Monitor unclaimed queue for claim request
 3. Check ownership table for successful claim
 4. Verify message processing in project queues

@@ -83,7 +83,7 @@ AWS_PROFILE=personal aws ecs update-service \
 ```
 
 ### Post-Deployment Testing
-1. Send test email to edit@webordinary.com
+1. Send test email to buddy@webordinary.com
 2. Monitor logs for queue routing
 3. Verify container claims ownership
 4. Check S3 deployment

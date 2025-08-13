@@ -325,7 +325,7 @@ describe('Queue-based message routing', () => {
     // Send email
     await ses.sendEmail({
       From: 'escottster@gmail.com',
-      To: 'edit@webordinary.com',
+      To: 'buddy@webordinary.com',
       Subject: 'Test',
       Body: 'Update homepage title',
     });
