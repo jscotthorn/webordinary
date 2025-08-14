@@ -26,20 +26,28 @@ export class GitService {
    */
   async configureGitCredentials(): Promise<void> {
     try {
+      const token = process.env.GITHUB_TOKEN;
+      if (!token) {
+        this.logger.error('GITHUB_TOKEN is required for git operations');
+        throw new Error('GITHUB_TOKEN is required for git operations');
+      }
+      
       // Set git user info
       await execAsync(`git config --global user.email "container@webordinary.com"`);
       await execAsync(`git config --global user.name "WebOrdinary Container"`);
       
-      // Configure credential helper to use in-memory store
-      await execAsync(`git config --global credential.helper 'cache --timeout=3600'`);
+      // Configure git to use token for HTTPS authentication
+      await execAsync(`git config --global credential.helper store`);
       
-      const token = process.env.GITHUB_TOKEN;
-      if (!token) {
-        this.logger.warn('No GITHUB_TOKEN found, push operations may fail');
-        return;
-      }
+      // Create credentials file with token
+      const credentialsPath = `${process.env.HOME || '/home/appuser'}/.git-credentials`;
+      const credentialEntry = `https://${token}:x-oauth-basic@github.com\n`;
       
-      this.logger.debug('Git credentials configured successfully');
+      // Write credentials to file
+      const fs = require('fs').promises;
+      await fs.writeFile(credentialsPath, credentialEntry, { mode: 0o600 });
+      
+      this.logger.debug('Git credentials configured successfully with GitHub token');
     } catch (error: any) {
       this.logger.error(`Failed to configure git credentials: ${error.message}`);
       throw error;
@@ -340,16 +348,9 @@ export class GitService {
         }
         
         // Try to clone the repository
-        const githubToken = process.env.GITHUB_TOKEN;
-        let authenticatedUrl = repoUrl;
-        
-        if (githubToken && repoUrl.includes('github.com')) {
-          // Add token to URL for authentication
-          authenticatedUrl = repoUrl.replace('https://github.com/', `https://${githubToken}@github.com/`);
-        }
-        
+        // Git credentials are already configured via credential store
         try {
-          await execAsync(`git clone ${authenticatedUrl} ${projectPath}`);
+          await execAsync(`git clone ${repoUrl} ${projectPath}`);
           this.logger.log(`Cloned repository from ${repoUrl} to ${projectPath}`);
         } catch (cloneError: any) {
           // If clone fails (e.g., repo doesn't exist), create a local repository

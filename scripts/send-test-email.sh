@@ -36,7 +36,8 @@ if [ -n "$MSG_ID" ]; then
     echo "Message ID: $MSG_ID"
     echo ""
     echo "Monitor the logs with:"
-    echo "  docker compose -f docker-compose.local.yml logs -f"
+    echo "  docker logs -f hermes-manual"
+    echo "  docker logs -f claude-manual"
 else
     echo "Failed to send message"
     exit 1

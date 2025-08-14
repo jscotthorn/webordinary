@@ -15,7 +15,39 @@ Email → SQS → Hermes → Container → S3 → User
 - `/hephaestus/` - CDK infrastructure
 - `/tests/` - Test suites
 
-## Critical Commands
+## Local Development
+
+### Quick Start
+```bash
+# 1. Start services
+./scripts/start-local-dev.sh
+
+# 2. Send test email
+./scripts/send-test-email.sh
+
+# 3. Check status
+./scripts/check-local-status.sh
+```
+
+### Critical Requirements
+- **WORKSPACE_PATH** must be `/workspace` in `.env.local`
+- **Repository** must be `jscotthorn/amelia-astro.git` in Hermes config
+- **GitHub Token** required in claude-code-container/.env.local
+- See `/docs/LOCAL_DEV_GUIDE.md` for all fixes needed
+
+### If Services Won't Start
+```bash
+# Clear cache and rebuild
+./scripts/start-local-dev.sh --clean
+
+# Nuclear option
+docker stop hermes-manual claude-manual
+docker rm hermes-manual claude-manual
+docker buildx prune -af
+./scripts/start-local-dev.sh
+```
+
+## Production Commands
 ```bash
 # Scale to zero (save money)
 AWS_PROFILE=personal aws ecs update-service \

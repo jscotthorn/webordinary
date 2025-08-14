@@ -387,7 +387,7 @@ export class QueueManagerService extends EventEmitter {
   getCurrentClaim(): { projectId: string; userId: string } | null {
     if (!this.currentProjectKey) return null;
     
-    const [projectId, userId] = this.currentProjectKey.split('-');
+    const [projectId, userId] = this.currentProjectKey.split('#');
     return { projectId, userId };
   }
 }

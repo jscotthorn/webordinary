@@ -9,32 +9,28 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-# Project root
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$PROJECT_ROOT"
-
 echo -e "${YELLOW}🛑 Stopping WebOrdinary Local Development Environment${NC}"
 echo "=================================================="
 
-# Check if services are running
-if docker compose -f docker-compose.local.yml ps --services --filter "status=running" | grep -q .; then
-    echo -e "${YELLOW}Stopping services...${NC}"
-    docker compose -f docker-compose.local.yml down
-    echo -e "${GREEN}✓ Services stopped${NC}"
-else
-    echo -e "${YELLOW}No services are currently running${NC}"
-fi
+# Stop containers
+echo -e "${YELLOW}Stopping services...${NC}"
+docker stop hermes-manual claude-manual 2>/dev/null || true
+echo -e "${GREEN}✓ Services stopped${NC}"
 
-# Optional: Clean up volumes
+# Optional: Remove containers
 if [ "$1" == "--clean" ]; then
-    echo -e "\n${YELLOW}Cleaning up volumes...${NC}"
-    docker compose -f docker-compose.local.yml down -v
-    echo -e "${GREEN}✓ Volumes removed${NC}"
+    echo -e "\n${YELLOW}Removing containers...${NC}"
+    docker rm hermes-manual claude-manual 2>/dev/null || true
+    echo -e "${GREEN}✓ Containers removed${NC}"
+    
+    echo -e "\n${YELLOW}Cleaning Docker build cache...${NC}"
+    docker buildx prune -f
+    echo -e "${GREEN}✓ Build cache cleaned${NC}"
 fi
 
 echo -e "\n${GREEN}✅ Local development environment stopped${NC}"
 
 if [ "$1" != "--clean" ]; then
     echo ""
-    echo "Tip: Use '$0 --clean' to also remove volumes"
+    echo "Tip: Use '$0 --clean' to also remove containers and clean cache"
 fi

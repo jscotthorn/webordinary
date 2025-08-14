@@ -190,7 +190,8 @@ export class MessageProcessor {
   }
 
   private async switchToSession(sessionId: string, chatThreadId: string): Promise<void> {
-    const branch = `thread-${chatThreadId}`;
+    // chatThreadId may already have 'thread-' prefix from Hermes
+    const branch = chatThreadId.startsWith('thread-') ? chatThreadId : `thread-${chatThreadId}`;
     
     // Commit current changes if any
     if (this.currentSessionId) {
@@ -227,10 +228,19 @@ export class MessageProcessor {
     try {
       this.logger.log('Executing instruction with ClaudeExecutorService');
       
+      // Get the project workspace path for Claude to work in
+      const projectPath = this.getProjectPath();
+      
+      // Add project path to context
+      const contextWithPath = {
+        ...message.context,
+        projectPath
+      };
+      
       // Use the ClaudeExecutorService to process the instruction
       const result = await this.claudeExecutor.execute(
         message.instruction,
-        message.context
+        contextWithPath
       );
       
       // Ensure result has the expected structure

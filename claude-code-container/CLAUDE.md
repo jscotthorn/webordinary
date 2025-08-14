@@ -2,6 +2,7 @@
 
 **Build**: `docker build --platform linux/amd64 -t webordinary/claude-code .`
 **Deploy**: `./build-and-push.sh`
+**Local Dev**: See `/docs/LOCAL_DEV_GUIDE.md`
 
 ## Critical
 - No HTTP server (removed port 8080)

@@ -27,8 +27,11 @@ export class ClaudeExecutorService {
       // Simulate processing the instruction
       await new Promise(resolve => setTimeout(resolve, 2000)); // Simulate processing time
       
+      // Determine the correct project path from context
+      const projectPath = context?.projectPath || this.workspacePath;
+      
       // Create a test file to demonstrate the system works
-      const testFilePath = path.join(this.workspacePath, 'test-page.html');
+      const testFilePath = path.join(projectPath, 'test-page.html');
       const testContent = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -46,6 +49,14 @@ export class ClaudeExecutorService {
       try {
         await fs.writeFile(testFilePath, testContent);
         this.logger.log(`Created test file: ${testFilePath}`);
+        
+        // Return a result that includes the file change
+        return {
+          success: true,
+          output: `Simulated: ${instruction}`,
+          summary: 'Test file created successfully',
+          filesChanged: ['test-page.html']
+        };
       } catch (error: any) {
         this.logger.warn(`Failed to create test file: ${error.message}`);
       }
