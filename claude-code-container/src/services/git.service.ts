@@ -47,7 +47,7 @@ export class GitService {
   }
 
   async checkoutBranch(branch: string): Promise<void> {
-    const projectPath = this.getProjectPath();
+    const projectPath = this.getRepoPath();
     try {
       await execAsync(`git checkout ${branch}`, { cwd: projectPath });
       this.logger.log(`Checked out branch: ${branch}`);
@@ -58,7 +58,7 @@ export class GitService {
   }
 
   async createBranch(branch: string): Promise<void> {
-    const projectPath = this.getProjectPath();
+    const projectPath = this.getRepoPath();
     try {
       await execAsync(`git checkout -b ${branch}`, { cwd: projectPath });
       this.logger.log(`Created and checked out new branch: ${branch}`);
@@ -69,7 +69,7 @@ export class GitService {
   }
 
   async autoCommitChanges(message: string, pushAfter: boolean = true): Promise<void> {
-    const projectPath = this.getProjectPath();
+    const projectPath = this.getRepoPath();
     try {
       // Check if there are changes to commit
       const { stdout: status } = await execAsync('git status --porcelain', { 
@@ -111,7 +111,7 @@ export class GitService {
    * Commit with both subject and body for detailed messages
    */
   async commitWithBody(subject: string, body?: string): Promise<void> {
-    const projectPath = this.getProjectPath();
+    const projectPath = this.getRepoPath();
     try {
       // Check if there are changes to commit
       const { stdout: status } = await execAsync('git status --porcelain', { 
@@ -156,7 +156,7 @@ export class GitService {
   }
 
   async getCurrentBranch(): Promise<string> {
-    const projectPath = this.getProjectPath();
+    const projectPath = this.getRepoPath();
     try {
       const { stdout } = await execAsync('git branch --show-current', {
         cwd: projectPath,
@@ -169,7 +169,7 @@ export class GitService {
   }
 
   async getStatus(): Promise<string> {
-    const projectPath = this.getProjectPath();
+    const projectPath = this.getRepoPath();
     try {
       const { stdout } = await execAsync('git status', {
         cwd: projectPath,
@@ -238,7 +238,7 @@ export class GitService {
   }
 
   async pull(branch: string = 'main'): Promise<void> {
-    const projectPath = this.getProjectPath();
+    const projectPath = this.getRepoPath();
     try {
       await execAsync(`git pull origin ${branch}`, {
         cwd: projectPath,
@@ -251,7 +251,7 @@ export class GitService {
   }
 
   async fetch(): Promise<void> {
-    const projectPath = this.getProjectPath();
+    const projectPath = this.getRepoPath();
     try {
       await execAsync('git fetch --all', {
         cwd: projectPath,
@@ -270,7 +270,19 @@ export class GitService {
       return `${this.workspacePath}/unclaimed/workspace`;
     }
     const { projectId, userId } = claim;
-    return `${this.workspacePath}/${projectId}/${userId}/amelia-astro`;
+    // Base path without repo name
+    return `${this.workspacePath}/${projectId}/${userId}`;
+  }
+
+  /**
+   * Get the full path including the repository name
+   * This should be used for all git operations after init
+   */
+  private getRepoPath(): string {
+    const basePath = this.getProjectPath();
+    // For now, assume amelia-astro is the repo name
+    // TODO: Store repo name in claim or retrieve from git config
+    return `${basePath}/amelia-astro`;
   }
 
   async initRepository(repoUrl?: string): Promise<void> {
@@ -281,7 +293,18 @@ export class GitService {
         return;
       }
       const { projectId: clientId, userId } = claim;
-      const projectPath = this.getProjectPath();
+      
+      // Extract repo name from URL if provided
+      let repoName = 'workspace'; // default
+      if (repoUrl) {
+        const match = repoUrl.match(/\/([^\/]+?)(?:\.git)?$/);
+        if (match) {
+          repoName = match[1];
+        }
+      }
+      
+      const basePath = this.getProjectPath();
+      const projectPath = `${basePath}/${repoName}`;
       
       // Ensure project directory exists
       await execAsync(`mkdir -p ${projectPath}`);
@@ -414,7 +437,7 @@ export class GitService {
    * Safely switch branches with stash support
    */
   async safeBranchSwitch(targetBranch: string): Promise<boolean> {
-    const projectPath = this.getProjectPath();
+    const projectPath = this.getRepoPath();
     try {
       // Check for uncommitted changes
       const hasChanges = await this.hasUncommittedChanges();
@@ -469,7 +492,7 @@ export class GitService {
    * Automatically resolve merge conflicts
    */
   async resolveConflictsAutomatically(): Promise<boolean> {
-    const projectPath = this.getProjectPath();
+    const projectPath = this.getRepoPath();
     try {
       // Check if we're in a conflict state
       const { stdout: status } = await execAsync('git status --porcelain', {
@@ -514,7 +537,7 @@ export class GitService {
    * Push with automatic conflict resolution
    */
   async safePush(branch?: string): Promise<boolean> {
-    const projectPath = this.getProjectPath();
+    const projectPath = this.getRepoPath();
     try {
       const currentBranch = branch || await this.getCurrentBranch();
       
@@ -542,7 +565,7 @@ export class GitService {
    * Handle non-fast-forward push errors
    */
   private async handleNonFastForward(branch: string): Promise<boolean> {
-    const projectPath = this.getProjectPath();
+    const projectPath = this.getRepoPath();
     this.logger.log('Remote has changes, attempting to merge...');
     
     try {
@@ -595,7 +618,7 @@ export class GitService {
    * Recover repository from bad state
    */
   async recoverRepository(): Promise<void> {
-    const projectPath = this.getProjectPath();
+    const projectPath = this.getRepoPath();
     this.logger.log('Attempting repository recovery...');
     
     try {

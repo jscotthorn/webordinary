@@ -509,14 +509,17 @@ export class MessageProcessor {
 
   /**
    * Get the project path for the current client/user
+   * This returns the full path including the repository name
    */
   private getProjectPath(): string {
     const claim = this.queueManager.getCurrentClaim();
     if (!claim) {
       // Fallback for legacy tests or initialization
-      return `${this.workspacePath}/unclaimed/workspace/amelia-astro`;
+      return `${this.workspacePath}/unclaimed/workspace`;
     }
     const { projectId, userId } = claim;
+    // Include the repo name for Astro builds and S3 sync
+    // TODO: Make repo name configurable per project
     return `${this.workspacePath}/${projectId}/${userId}/amelia-astro`;
   }
 
