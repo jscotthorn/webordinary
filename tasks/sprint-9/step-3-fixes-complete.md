@@ -45,7 +45,7 @@ Successfully fixed all Claude Container message processing issues identified in 
   "sessionId": "test-fixed-sprint9",
   "projectId": "ameliastamps",
   "userId": "scott",
-  "repoUrl": "https://github.com/ameliastamps/amelia-astro.git",
+  "repoUrl": "https://github.com/jscotthorn/amelia-astro.git",
   "instruction": "Create a simple test page",
   "chatThreadId": "test-thread-sprint9",
   "commandId": "cmd-sprint9-test"
@@ -98,7 +98,7 @@ Message ID: `c0409ff1-84fb-496d-a7f8-4dc8c1f08073`
 3. **Check git operations**:
    ```bash
    # Check if branch was created
-   git ls-remote https://github.com/ameliastamps/amelia-astro.git | grep thread-sprint9
+   git ls-remote https://github.com/jscotthorn/amelia-astro.git | grep thread-sprint9
    ```
 
 ## Status: ✅ COMPLETE

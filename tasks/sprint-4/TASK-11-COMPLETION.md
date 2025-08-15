@@ -152,7 +152,7 @@ ASTRO_PORT=4321
 PREVIEW_DOMAIN=preview.webordinary.com
 
 # Optional
-REPO_URL=https://github.com/ameliastamps/amelia-astro.git
+REPO_URL=https://github.com/jscotthorn/amelia-astro.git
 ```
 
 ## Known Issues & Mitigations

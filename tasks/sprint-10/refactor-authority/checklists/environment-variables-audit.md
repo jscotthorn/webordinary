@@ -122,7 +122,7 @@ docker run -e AWS_PROFILE=personal \
 ```json
 {
   "type": "work",
-  "repoUrl": "https://github.com/ameliastamps/amelia-astro.git",
+  "repoUrl": "https://github.com/jscotthorn/amelia-astro.git",
   "projectId": "amelia",
   "userId": "escottster@gmail.com",
   "instruction": "test"

@@ -116,7 +116,7 @@ private async routeMessage(message: any) {
 
 private getRepoUrlForProject(projectId: string): string {
   const repoMap = {
-    'ameliastamps': 'https://github.com/ameliastamps/amelia-astro.git',
+    'ameliastamps': 'https://github.com/jscotthorn/amelia-astro.git',
     // Add other projects as needed
   };
   return repoMap[projectId] || null;

@@ -68,7 +68,7 @@ if (githubToken && repoUrl.includes('github.com')) {
 - `WORKSPACE_PATH`: /workspace (EFS mount)
 - `CLIENT_ID`: ameliastamps (default)
 - `USER_ID`: scott (default)
-- `REPO_URL`: https://github.com/ameliastamps/amelia-astro.git
+- `REPO_URL`: https://github.com/jscotthorn/amelia-astro.git
 - `GITHUB_TOKEN`: Provided via Secrets Manager
 
 ## Verification

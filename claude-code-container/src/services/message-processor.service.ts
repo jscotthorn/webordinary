@@ -343,7 +343,7 @@ export class MessageProcessor {
       if (result.buildSuccess) {
         // Step 4: Sync to S3
         this.logger.log('Step 4/5: Deploying to S3...');
-        result.deploySuccess = await this.syncToS3WithInterrupt(message.clientId);
+        result.deploySuccess = await this.syncToS3WithInterrupt(message.projectId || message.clientId);
 
         // Step 5: Push commits to GitHub with conflict handling
         if (process.env.GIT_PUSH_ENABLED !== 'false') {
@@ -441,7 +441,7 @@ export class MessageProcessor {
   private async syncToS3WithInterrupt(clientId: string): Promise<boolean> {
     const projectPath = this.getProjectPath();
     const distPath = `${projectPath}/dist`;
-    const bucket = `edit.${clientId || 'ameliastamps'}.webordinary.com`;
+    const bucket = `edit.${clientId || 'amelia'}.webordinary.com`;
 
     // Check if dist folder exists
     try {

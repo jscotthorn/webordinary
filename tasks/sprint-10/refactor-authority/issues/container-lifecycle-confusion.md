@@ -21,7 +21,7 @@ The container lifecycle has fundamentally changed but code still expects the old
 ### Example Old Environment
 ```bash
 # Container started with:
-GIT_REPO_URL=https://github.com/ameliastamps/amelia-astro.git
+GIT_REPO_URL=https://github.com/jscotthorn/amelia-astro.git
 PROJECT_ID=amelia
 USER_ID=escottster@gmail.com
 CLIENT_ID=amelia  # Fixed at startup
@@ -45,7 +45,7 @@ CLIENT_ID=amelia  # Fixed at startup
   "type": "work",
   "projectId": "amelia",
   "userId": "escottster@gmail.com",
-  "repoUrl": "https://github.com/ameliastamps/amelia-astro.git",
+  "repoUrl": "https://github.com/jscotthorn/amelia-astro.git",
   "instruction": "Update the homepage"
 }
 ```

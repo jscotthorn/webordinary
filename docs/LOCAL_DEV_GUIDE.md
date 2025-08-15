@@ -2,6 +2,29 @@
 
 ## Quick Start
 
+### Option 1: Hybrid Mode (Recommended for Claude development)
+Run Claude locally to use your Anthropic subscription:
+
+```bash
+# Start hybrid environment (Hermes in Docker, Claude local)
+./scripts/start-hybrid-dev.sh
+
+# Send test email
+./scripts/send-test-email.sh
+
+# Stop services
+./scripts/stop-hybrid-dev.sh
+```
+
+**Benefits:**
+- Uses your Claude subscription (no AWS Bedrock charges)
+- Direct access to macOS Keychain authentication
+- Faster iteration for Claude Code SDK development
+- Real-time logs in terminal
+
+### Option 2: Full Docker Mode
+Run everything in Docker containers:
+
 ```bash
 # Start services
 ./scripts/start-local-dev.sh
@@ -16,6 +39,28 @@
 docker logs -f hermes-manual
 docker logs -f claude-manual
 ```
+
+**Note:** Docker mode uses AWS Bedrock (not your Claude subscription)
+
+## Hybrid Mode Details
+
+### How It Works
+1. **Hermes** runs in Docker container (handles SQS routing)
+2. **Claude** runs as local Node.js process (uses your macOS Keychain)
+3. Both connect to the same AWS SQS queues
+
+### Prerequisites
+- Node.js installed locally (`brew install node`)
+- Claude Code authenticated (`claude` command works in terminal)
+- AWS credentials configured
+
+### Configuration Files
+- `claude-code-container/.env.local.hybrid` - Hybrid mode environment
+- `claude-code-container/run-local.sh` - Local execution script
+
+### Workspace Location
+- Hybrid mode: `/tmp/webordinary-workspace/`
+- Docker mode: `/workspace/` (inside container)
 
 ## Critical Configuration
 
@@ -112,6 +157,31 @@ const result = await this.claudeExecutor.execute(
   contextWithPath
 );
 ```
+
+## Claude SDK Configuration
+
+### Authentication Methods
+
+#### Hybrid Mode (Local)
+- Uses your macOS Keychain via `claude` CLI
+- No API key needed in environment
+- `CLAUDE_CODE_USE_BEDROCK=0` in `.env.local.hybrid`
+
+#### Docker Mode  
+- Uses AWS Bedrock
+- `CLAUDE_CODE_USE_BEDROCK=1` in `.env.local`
+- Authenticated via AWS credentials
+
+#### API Key Mode (Future)
+- Set `ANTHROPIC_API_KEY` environment variable
+- Set `CLAUDE_CODE_USE_BEDROCK=0`
+- Not currently implemented (Keychain is preferred)
+
+### SDK Implementation
+- Located in `claude-code-container/src/services/claude-executor.service.ts`
+- Uses `@anthropic-ai/claude-code` TypeScript SDK
+- Streams messages via async iteration
+- Detects file changes via Git operations
 
 ## Common Issues and Solutions
 

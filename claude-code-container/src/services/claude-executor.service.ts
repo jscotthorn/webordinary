@@ -74,13 +74,23 @@ export class ClaudeExecutorService {
       // Determine the correct project path from context
       const projectPath = context?.projectPath || this.workspacePath;
       
-      this.logger.log(`Using Claude Code SDK with Bedrock backend`);
+      const useBedrock = process.env.CLAUDE_CODE_USE_BEDROCK !== '0';
+      this.logger.log(`Using Claude Code SDK with ${useBedrock ? 'Bedrock' : 'Anthropic API'} backend`);
       
-      // Configure environment for Bedrock with Claude Sonnet
-      process.env.CLAUDE_CODE_USE_BEDROCK = '1';
-      process.env.ANTHROPIC_MODEL = 'sonnet';
-      process.env.ANTHROPIC_SMALL_FAST_MODEL = 'haiku';
-      process.env.AWS_REGION = process.env.AWS_REGION || 'us-west-2';
+      // Configure environment based on backend
+      if (useBedrock) {
+        // Configure for Bedrock
+        process.env.CLAUDE_CODE_USE_BEDROCK = '1';
+        process.env.AWS_REGION = process.env.AWS_REGION || 'us-west-2';
+      } else {
+        // Configure for Anthropic API - credentials from ~/.claude
+        process.env.CLAUDE_CODE_USE_BEDROCK = '0';
+        // The SDK will automatically look for credentials in ~/.claude
+      }
+      
+      // Common configuration
+      process.env.ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || 'sonnet';
+      process.env.ANTHROPIC_SMALL_FAST_MODEL = process.env.ANTHROPIC_SMALL_FAST_MODEL || 'haiku';
       process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS = process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS || '4096';
       process.env.MAX_THINKING_TOKENS = process.env.MAX_THINKING_TOKENS || '1024';
       
@@ -92,6 +102,11 @@ export class ClaudeExecutorService {
       
       // Use the Claude Code SDK query function
       this.logger.log(`Executing query with prompt: ${instruction.substring(0, 100)}...`);
+      
+      // Log authentication details (without exposing secrets)
+      if (!useBedrock) {
+        this.logger.log(`Looking for Anthropic credentials in ~/.claude (mounted as /home/appuser/.claude)`);
+      }
       
       for await (const message of query({
         prompt: instruction,

@@ -107,6 +107,7 @@ docker run -d --name claude-manual \
   --env-file claude-code-container/.env.local \
   -e AWS_PROFILE=personal \
   -v ~/.aws:/home/appuser/.aws:ro \
+  -v ~/.claude:/home/appuser/.claude:ro \
   --network webordinary_webordinary-local \
   --entrypoint node \
   webordinary-claude-container dist/main.js

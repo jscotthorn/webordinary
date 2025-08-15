@@ -77,7 +77,7 @@ environment: {
   ASTRO_PORT: '4321',
   DEFAULT_CLIENT_ID: 'ameliastamps',
   DEFAULT_USER_ID: 'scott',
-  DEFAULT_REPO: 'https://github.com/ameliastamps/amelia-astro.git'
+  DEFAULT_REPO: 'https://github.com/jscotthorn/amelia-astro.git'
 }
 ```
 

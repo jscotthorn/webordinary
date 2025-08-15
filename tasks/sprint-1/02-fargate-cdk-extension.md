@@ -210,7 +210,7 @@ export class FargateEditStack extends cdk.Stack {
         AUTO_SHUTDOWN_MINUTES: '5',
         CLIENT_ID: 'ameliastamps', // Will be dynamic via API
         USER_ID: 'scott', // Will be dynamic via API  
-        DEFAULT_REPO: 'https://github.com/ameliastamps/amelia-astro.git',
+        DEFAULT_REPO: 'https://github.com/jscotthorn/amelia-astro.git',
       },
       secrets: {
         ANTHROPIC_API_KEY: ecs.Secret.fromSecretsManager(anthropicSecret),

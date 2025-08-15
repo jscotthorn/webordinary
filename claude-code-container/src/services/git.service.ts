@@ -352,6 +352,18 @@ export class GitService {
         try {
           await execAsync(`git clone ${repoUrl} ${projectPath}`);
           this.logger.log(`Cloned repository from ${repoUrl} to ${projectPath}`);
+          
+          // Install npm dependencies if package.json exists
+          const fs = require('fs').promises;
+          const packageJsonPath = `${projectPath}/package.json`;
+          try {
+            await fs.access(packageJsonPath);
+            this.logger.log('Installing npm dependencies...');
+            await execAsync('npm install', { cwd: projectPath });
+            this.logger.log('Dependencies installed successfully');
+          } catch {
+            this.logger.debug('No package.json found, skipping npm install');
+          }
         } catch (cloneError: any) {
           // If clone fails (e.g., repo doesn't exist), create a local repository
           this.logger.warn(`Clone failed (${cloneError.message}), creating local repository`);
