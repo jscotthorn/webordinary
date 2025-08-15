@@ -17,7 +17,23 @@ Email → SQS → Hermes → Container → S3 → User
 
 ## Local Development
 
-### Quick Start
+### Quick Start (Hybrid Mode - RECOMMENDED for Claude SDK work)
+Use hybrid mode when developing/testing Claude Code SDK features:
+```bash
+# 1. Start hybrid (Hermes in Docker, Claude local - uses your subscription!)
+./scripts/start-hybrid-dev.sh
+
+# 2. Send test email
+./scripts/send-test-email.sh
+
+# 3. Stop when done (or Ctrl+C)
+./scripts/stop-hybrid-dev.sh
+```
+
+**Why Hybrid?** Uses your Claude subscription, faster iteration, real-time logs, access to macOS Keychain
+
+### Alternative: Full Docker Mode
+For production-like testing (uses AWS Bedrock, charges apply):
 ```bash
 # 1. Start services
 ./scripts/start-local-dev.sh
@@ -30,21 +46,20 @@ Email → SQS → Hermes → Container → S3 → User
 ```
 
 ### Critical Requirements
-- **WORKSPACE_PATH** must be `/workspace` in `.env.local`
-- **Repository** must be `jscotthorn/amelia-astro.git` in Hermes config
-- **GitHub Token** required in claude-code-container/.env.local
-- See `/docs/LOCAL_DEV_GUIDE.md` for all fixes needed
+- **Hybrid Mode**: Node.js installed, Claude authenticated locally
+- **Docker Mode**: WORKSPACE_PATH must be `/workspace` in `.env.local`
+- **Both**: Repository must be `jscotthorn/amelia-astro.git`, GitHub Token required
+- See `/docs/LOCAL_DEV_GUIDE.md` for complete setup
 
 ### If Services Won't Start
 ```bash
-# Clear cache and rebuild
+# For Docker mode issues:
 ./scripts/start-local-dev.sh --clean
 
 # Nuclear option
 docker stop hermes-manual claude-manual
 docker rm hermes-manual claude-manual
 docker buildx prune -af
-./scripts/start-local-dev.sh
 ```
 
 ## Production Commands
