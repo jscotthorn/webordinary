@@ -1,8 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { exec, spawn } from 'child_process';
+import { exec } from 'child_process';
 import { promisify } from 'util';
 import * as path from 'path';
 import * as fs from 'fs/promises';
+import { query } from '@anthropic-ai/claude-code';
 
 const execAsync = promisify(exec);
 
@@ -19,7 +20,7 @@ export class ClaudeExecutorService {
     this.logger.log(`Executing Claude Code instruction: ${instruction.substring(0, 100)}...`);
     
     // Check if we're in simulation mode
-    const simulationMode = process.env.CLAUDE_SIMULATION_MODE === 'true' || process.env.NODE_ENV === 'development';
+    const simulationMode = process.env.CLAUDE_SIMULATION_MODE === 'true';
     
     if (simulationMode) {
       this.logger.log('📝 Using simulation mode for Claude API');
@@ -70,34 +71,120 @@ export class ClaudeExecutorService {
     }
     
     try {
-      // In production, execute using Claude Code CLI
-      const { stdout, stderr } = await execAsync(
-        `claude-code --instruction "${instruction}" --workspace "${this.workspacePath}"`,
-        {
-          cwd: this.workspacePath,
-          maxBuffer: 10 * 1024 * 1024, // 10MB buffer
-          timeout: 300000, // 5 minute timeout
+      // Determine the correct project path from context
+      const projectPath = context?.projectPath || this.workspacePath;
+      
+      this.logger.log(`Using Claude Code SDK with Bedrock backend`);
+      
+      // Configure environment for Bedrock with Claude Sonnet
+      process.env.CLAUDE_CODE_USE_BEDROCK = '1';
+      process.env.ANTHROPIC_MODEL = 'sonnet';
+      process.env.ANTHROPIC_SMALL_FAST_MODEL = 'haiku';
+      process.env.AWS_REGION = process.env.AWS_REGION || 'us-west-2';
+      process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS = process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS || '4096';
+      process.env.MAX_THINKING_TOKENS = process.env.MAX_THINKING_TOKENS || '1024';
+      
+      let output = '';
+      let assistantMessages = [];
+      let sessionId = '';
+      let totalCost = 0;
+      let duration = 0;
+      
+      // Use the Claude Code SDK query function
+      this.logger.log(`Executing query with prompt: ${instruction.substring(0, 100)}...`);
+      
+      for await (const message of query({
+        prompt: instruction,
+        options: {
+          cwd: projectPath,
+          model: 'sonnet',
+          maxTurns: 3,
+          // Allow file operations but in a controlled manner
+          allowedTools: ['Read', 'Edit', 'Write', 'Bash', 'Grep', 'LS', 'Glob']
         }
-      );
-
-      if (stderr) {
-        this.logger.warn(`Claude Code stderr: ${stderr}`);
+      })) {
+        this.logger.debug(`Received message type: ${message.type}`);
+        
+        if (message.type === 'system') {
+          sessionId = message.session_id;
+          this.logger.log(`Claude Code session started: ${sessionId}`);
+        } else if (message.type === 'assistant') {
+          // Assistant messages contain the actual responses and tool uses
+          assistantMessages.push(message.message);
+          // Extract text content from the assistant message
+          if (message.message && message.message.content) {
+            for (const content of message.message.content) {
+              if (content.type === 'text') {
+                output += content.text + '\n';
+              }
+            }
+          }
+        } else if (message.type === 'result') {
+          // Result message indicates completion
+          if (message.subtype === 'success' && (message as any).result) {
+            output = (message as any).result || output;
+          }
+          totalCost = message.total_cost_usd || 0;
+          duration = message.duration_ms || 0;
+          this.logger.log(`Task completed - Cost: $${totalCost}, Duration: ${duration}ms`);
+          break;
+        }
       }
-
-      // Try to parse JSON output
-      try {
-        return JSON.parse(stdout);
-      } catch {
-        // If not JSON, return as plain output
-        return {
-          output: stdout,
-          filesChanged: [],
-          success: true,
-        };
-      }
+      
+      // Detect file changes via git
+      const filesChanged = await this.detectFileChanges(projectPath, {});
+      
+      return {
+        success: true,
+        output: output.trim(),
+        summary: 'Task completed successfully',
+        filesChanged,
+        cost: totalCost,
+        duration,
+        sessionId
+      };
     } catch (error: any) {
-      this.logger.error(`Claude Code execution failed: ${error.message}`);
+      this.logger.error(`Claude Code SDK execution failed: ${error.message}`);
       throw error;
+    }
+  }
+
+  /**
+   * Detect which files were changed by comparing git status before/after
+   * or by parsing Claude's output for file operations
+   */
+  private async detectFileChanges(projectPath: string, result: any): Promise<string[]> {
+    try {
+      // Try to get modified files from git
+      const { stdout } = await execAsync('git diff --name-only HEAD', {
+        cwd: projectPath
+      });
+      
+      const modifiedFiles = stdout.trim().split('\n').filter(f => f);
+      
+      // Also check for untracked files
+      const { stdout: untrackedOutput } = await execAsync('git ls-files --others --exclude-standard', {
+        cwd: projectPath
+      });
+      
+      const untrackedFiles = untrackedOutput.trim().split('\n').filter(f => f);
+      
+      return [...modifiedFiles, ...untrackedFiles];
+    } catch (error) {
+      this.logger.warn(`Could not detect file changes via git: ${error}`);
+      
+      // Fallback: try to extract from Claude's output
+      if (result.tool_calls) {
+        const fileOperations = result.tool_calls.filter((call: any) => 
+          ['Edit', 'Write', 'MultiEdit'].includes(call.tool)
+        );
+        
+        return fileOperations.map((op: any) => 
+          op.parameters?.file_path || op.parameters?.path
+        ).filter(Boolean);
+      }
+      
+      return [];
     }
   }
 

@@ -25,6 +25,7 @@
     "test:aws:multi": "AWS_PROFILE=personal npm run test:multi-session"
   },
   "dependencies": {
+    "@anthropic-ai/claude-code": "^1.0.81",
     "@aws-sdk/client-sqs": "^3.864.0",
     "@aws-sdk/client-dynamodb": "^3.864.0",
     "@aws-sdk/client-s3": "^3.864.0",

@@ -40,11 +40,8 @@ RUN ARCH=$(dpkg --print-architecture) && \
     ./aws/install && \
     rm -rf awscliv2.zip aws/
 
-# Install Claude Code CLI globally (for Task 03 integration)
-# For now, we'll create a placeholder since we're using simulation
-RUN mkdir -p /usr/local/bin && \
-    echo '#!/bin/bash\necho "Claude Code CLI placeholder - will be replaced with Bedrock integration in Task 03"' > /usr/local/bin/claude-code && \
-    chmod +x /usr/local/bin/claude-code
+# Claude Code SDK will be installed via npm dependencies
+# No need for global CLI installation
 
 # Create app user for security
 RUN useradd -m -s /bin/bash appuser && \
@@ -78,7 +75,9 @@ RUN mkdir -p ~/.git-credentials-dir
 # Set environment variables
 ENV NODE_ENV=production \
     CLAUDE_CODE_NON_INTERACTIVE=true \
-    ASTRO_TELEMETRY_DISABLED=1
+    ASTRO_TELEMETRY_DISABLED=1 \
+    CLAUDE_CODE_USE_BEDROCK=1 \
+    AWS_REGION=us-west-2
 
 # Add helpful labels
 LABEL maintainer="Webordinary <support@webordinary.com>"

@@ -5,11 +5,11 @@ import { Logger } from '@nestjs/common';
 import { GitService } from './services/git.service';
 import { S3SyncService } from './services/s3-sync.service';
 import { QueueManagerService } from './services/queue-manager.service';
-import { MessageProcessor } from './message-processor.service';
+import { MessageProcessor } from './services/message-processor.service';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
-  
+
   // Create NestJS application context (no HTTP server needed)
   const app = await NestFactory.createApplicationContext(AppModule, {
     logger: ['error', 'warn', 'log', 'debug'],
@@ -36,7 +36,7 @@ async function bootstrap() {
   // Initialize queue manager for claiming projects
   logger.log('Initializing queue manager...');
   await queueManager.initialize();
-  
+
   // Set up message processing when queue manager receives messages
   queueManager.on('message', async (messageData: any) => {
     logger.log(`Processing message from claimed project queue`);
@@ -54,13 +54,13 @@ async function bootstrap() {
   // Graceful shutdown
   const shutdown = async () => {
     logger.log('Shutting down gracefully...');
-    
+
     // Shutdown queue manager
     await queueManager.shutdown();
-    
+
     // Close NestJS app
     await app.close();
-    
+
     process.exit(0);
   };
 
@@ -71,19 +71,19 @@ async function bootstrap() {
   logger.log('Container started successfully');
   logger.log(`- Workspace: ${process.env.WORKSPACE_PATH || '/workspace'}`);
   logger.log('- Ready to claim projects and process messages');
-  
+
   if (process.env.UNCLAIMED_QUEUE_URL) {
     logger.log(`- Monitoring unclaimed queue: ${process.env.UNCLAIMED_QUEUE_URL}`);
   } else {
     logger.warn('- No UNCLAIMED_QUEUE_URL provided, waiting for environment update');
   }
-  
+
   if (process.env.OWNERSHIP_TABLE_NAME) {
     logger.log(`- Using ownership table: ${process.env.OWNERSHIP_TABLE_NAME}`);
   } else {
     logger.log('- Using default ownership table: webordinary-container-ownership');
   }
-  
+
   // Keep the process alive for health checks
   // Queue manager will keep polling
   setInterval(() => {
