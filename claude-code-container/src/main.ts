@@ -83,17 +83,6 @@ async function bootstrap() {
   } else {
     logger.log('- Using default ownership table: webordinary-container-ownership');
   }
-
-  // Keep the process alive for health checks
-  // Queue manager will keep polling
-  setInterval(() => {
-    const project = queueManager.getCurrentProject();
-    if (project) {
-      logger.debug(`Container heartbeat - serving project: ${project}`);
-    } else {
-      logger.debug('Container heartbeat - waiting for project claim...');
-    }
-  }, 60000); // Log every minute to show we're alive
 }
 
 bootstrap().catch((err) => {

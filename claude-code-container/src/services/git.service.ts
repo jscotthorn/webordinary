@@ -68,8 +68,9 @@ export class GitService {
   async createBranch(branch: string): Promise<void> {
     const projectPath = this.getRepoPath();
     try {
-      await execAsync(`git checkout -b ${branch}`, { cwd: projectPath });
-      this.logger.log(`Created and checked out new branch: ${branch}`);
+      // Always create new branches from master to ensure clean state
+      await execAsync(`git checkout -b ${branch} origin/master`, { cwd: projectPath });
+      this.logger.log(`Created and checked out new branch: ${branch} from master`);
     } catch (error: any) {
       this.logger.error(`Failed to create branch ${branch}: ${error.message}`);
       throw error;
@@ -325,8 +326,18 @@ export class GitService {
         // Pull latest changes if repo exists
         if (repoUrl) {
           try {
-            await execAsync('git pull origin main', { cwd: projectPath });
-            this.logger.log('Pulled latest changes from repository');
+            // First check which branch exists on remote
+            const { stdout: remoteBranches } = await execAsync('git ls-remote --heads origin', { cwd: projectPath });
+            const hasMain = remoteBranches.includes('refs/heads/main');
+            const hasMaster = remoteBranches.includes('refs/heads/master');
+            
+            const defaultBranch = hasMain ? 'main' : (hasMaster ? 'master' : null);
+            if (defaultBranch) {
+              await execAsync(`git pull origin ${defaultBranch}`, { cwd: projectPath });
+              this.logger.log(`Pulled latest changes from ${defaultBranch} branch`);
+            } else {
+              this.logger.warn('No main or master branch found on remote');
+            }
           } catch (pullError: any) {
             this.logger.warn(`Could not pull latest changes: ${pullError.message}`);
           }
@@ -409,7 +420,7 @@ export class GitService {
    */
   async hasUncommittedChanges(workspacePath?: string): Promise<boolean> {
     try {
-      const cwd = workspacePath || this.getProjectPath();
+      const cwd = workspacePath || this.getRepoPath();
       const { stdout } = await execAsync('git status --porcelain', { cwd });
       return stdout.trim().length > 0;
     } catch (error: any) {
@@ -423,7 +434,7 @@ export class GitService {
    */
   async stageChanges(workspacePath?: string, files: string = '.'): Promise<void> {
     try {
-      const cwd = workspacePath || this.getProjectPath();
+      const cwd = workspacePath || this.getRepoPath();
       await execAsync(`git add ${files}`, { cwd });
       this.logger.debug(`Staged changes: ${files}`);
     } catch (error: any) {
@@ -437,7 +448,7 @@ export class GitService {
    */
   async commit(message: string, workspacePath?: string): Promise<void> {
     try {
-      const cwd = workspacePath || this.getProjectPath();
+      const cwd = workspacePath || this.getRepoPath();
       await execAsync(`git commit -m "${message}"`, { cwd });
       this.logger.log(`Committed changes: ${message}`);
     } catch (error: any) {
@@ -471,9 +482,9 @@ export class GitService {
           cwd: projectPath
         });
       } catch (checkoutError: any) {
-        // Branch doesn't exist, create it
+        // Branch doesn't exist, create it from master
         if (checkoutError.message.includes('did not match any')) {
-          await execAsync(`git checkout -b ${targetBranch}`, {
+          await execAsync(`git checkout -b ${targetBranch} origin/master`, {
             cwd: projectPath
           });
         } else {

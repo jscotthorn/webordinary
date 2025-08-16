@@ -36,8 +36,9 @@ if [ -n "$MSG_ID" ]; then
     echo "Message ID: $MSG_ID"
     echo ""
     echo "Monitor the logs with:"
-    echo "  docker logs -f hermes-manual"
-    echo "  docker logs -f claude-manual"
+    echo "  • Hermes (Docker):     docker logs -f hermes-manual"
+    echo "  • Claude (Local):      tail -f /tmp/webordinary-logs/claude-output.log"
+    echo "  • Or use:              ./scripts/check-hybrid-status.sh"
 else
     echo "Failed to send message"
     exit 1

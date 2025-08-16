@@ -28,7 +28,7 @@ CloudFront CDN → Production Site
 ### Amelia Stamps (First Client)
 - **Production**: https://amelia.webordinary.com (CloudFront → S3)
 - **Editor S3**: https://edit.amelia.webordinary.com (S3 static site)
-- **GitHub**: ameliastamps/amelia-astro
+- **GitHub**: jscotthorn/amelia-astro
 - **Auto-Deploy**: GitHub webhook → Lambda → S3 → CloudFront
 
 ## 📦 Core Components
