@@ -2269,10 +2269,18 @@ aws sqs set-queue-attributes \
 ### Sprint 2: Lambda Functions (3-4 days)
 **Goal**: Build and test all Lambda functions locally
 
-#### Day 4-5: Core Lambdas
-- [ ] intake-lambda: S3 trigger → parse → start Step Functions
-- [ ] process-attachment-lambda: Sharp container for image optimization
-- [ ] Test with LocalStack + sample emails
+#### Day 4-5: Core Lambdas ✅ COMPLETE (with Local Dev Stack Detour)
+- [x] intake-lambda: S3 trigger → parse → start Step Functions
+- [x] process-attachment-lambda: Sharp container for image optimization
+- [x] Test with LocalStack + sample emails
+- [x] **DETOUR**: Complete local development environment overhaul
+  - Created unified start-local.sh/stop-local.sh scripts
+  - Integrated LocalStack for all AWS services
+  - Removed Hermes dependencies from local dev
+  - Created comprehensive test-email.sh script
+  - Built automatic stub Lambda generation
+- [x] **BONUS**: Step Functions ASL definition (pulled from Sprint 3)
+- [x] **BONUS**: CDK StepFunctionsStack (pulled from Sprint 3)
 
 #### Day 6-7: Support Lambdas  
 - [ ] check-active-job-lambda: DynamoDB check + interrupt send
@@ -2284,7 +2292,7 @@ aws sqs set-queue-attributes \
 **Goal**: Deploy complete Step Functions state machine
 
 #### Day 8-9: State Machine Definition
-- [ ] Create ASL definition in `/hephaestus/lib/stepfunctions/`
+- [x] Create ASL definition in `/hephaestus/lib/stepfunctions/` *(Completed in Sprint 2)*
 - [ ] Add LambdaStack to CDK
 - [ ] Add StepFunctionsStack to CDK
 - [ ] Test state machine locally with Step Functions Local

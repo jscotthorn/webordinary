@@ -19,3 +19,9 @@ dist/
 
 # Local configuration files
 .claude/settings.local.json
+localstack-data
+
+# Encryption key
+*.pem
+*.pem.key
+*.pem.crt

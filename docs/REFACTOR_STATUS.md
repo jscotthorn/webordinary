@@ -23,11 +23,28 @@
   - [x] Updated queue visibility timeouts
   - [x] Deferred CDK resources (SES bucket, active-jobs table)
 
+- [x] Sprint 2 Day 4-5: Core Lambda functions with Local Dev Stack - 2025-08-17
+  - [x] Created intake-lambda for S3 trigger → parse → Step Functions
+  - [x] Created process-attachment-lambda with Sharp for image optimization  
+  - [x] **DETOUR**: Complete local development environment overhaul
+    - [x] Created unified scripts (start-local.sh, stop-local.sh, test-email.sh)
+    - [x] Integrated LocalStack for all AWS services
+    - [x] Removed Hermes dependencies from local development
+    - [x] Consolidated 10+ scripts into 3
+  - [x] Created Step Functions ASL definition (pulled from Sprint 3)
+  - [x] Created CDK StepFunctionsStack (pulled from Sprint 3)
+  - [x] Successfully tested both Lambda functions
+  - [x] Validated complete email processing flow
+
 ## In Progress
-- [ ] Sprint 2: Lambda functions development
+- [ ] Sprint 2 Day 6-7: Support Lambda functions
+  - [ ] check-active-job-lambda: DynamoDB check + interrupt send
+  - [ ] rate-limited-claim-lambda: Conditional DynamoDB writes
+  - [ ] record-interruption-lambda: Audit trail
+  - [ ] handle-timeout-lambda: Timeout handling
+  - [ ] Unit tests with mocked AWS services
 
 ## Upcoming
-- [ ] Sprint 2: Lambda functions
 - [ ] Sprint 3: Step Functions deployment
 - [ ] Sprint 4: Container integration
 - [ ] Sprint 5: Testing

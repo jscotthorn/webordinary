@@ -1,297 +1,370 @@
 # Local Development Guide
 
+## ⚠️ MAJOR UPDATE: Lambda-based Development (2025-08-17)
+
+Hermes has been replaced with Lambda functions and Step Functions. Use the new Lambda development environment for local testing.
+
 ## Quick Start
 
-### Option 1: Hybrid Mode (Recommended for Claude development)
-Run Claude locally to use your Anthropic subscription:
+### Unified Local Development (Current Approach)
+Everything runs locally with LocalStack:
 
 ```bash
-# Start hybrid environment (Hermes in Docker, Claude local)
-./scripts/start-hybrid-dev.sh
+# Start everything (LocalStack, Lambdas, Step Functions)
+./scripts/start-local.sh
 
-# Send test email
-./scripts/send-test-email.sh
+# Optional: Skip Claude Code Container
+./scripts/start-local.sh --no-claude
 
-# Stop services
-./scripts/stop-hybrid-dev.sh
+# Test email processing
+./scripts/test-email.sh
+
+# Test with attachment
+./scripts/test-email.sh --with-attachment
+
+# Test interrupt scenario
+./scripts/test-email.sh --interrupt
+
+# Stop all services
+./scripts/stop-local.sh
 ```
+
+**Available Scripts (only 3!):**
+- `start-local.sh` - Starts everything needed for local development
+- `stop-local.sh` - Cleanly stops all services
+- `test-email.sh` - Comprehensive testing tool
 
 **Benefits:**
-- Uses your Claude subscription (no AWS Bedrock charges)
-- Direct access to macOS Keychain authentication
-- Faster iteration for Claude Code SDK development
-- Real-time logs in terminal
+- Full AWS service mocking with LocalStack
+- Automatic Lambda deployment and updates
+- Step Functions orchestration
+- S3 event triggers configured automatically
+- No Hermes dependency
+- Stub Lambda generation for missing functions
+- Accurate production simulation
 
-### Option 2: Full Docker Mode
-Run everything in Docker containers:
+## Lambda Development Environment
 
-```bash
-# Start services
-./scripts/start-local-dev.sh
-
-# Send test email
-./scripts/send-test-email.sh
-
-# Check status
-./scripts/check-local-status.sh
-
-# Monitor logs
-docker logs -f hermes-manual
-docker logs -f claude-manual
+### Architecture
+```
+Email → S3 → Lambda → Step Functions → Container → S3 → User
 ```
 
-**Note:** Docker mode uses AWS Bedrock (not your Claude subscription)
+### What's Included
+- **LocalStack**: Mocks AWS services locally
+  - S3 buckets with event triggers
+  - Lambda function runtime
+  - SQS queues (FIFO and standard)
+  - DynamoDB tables
+  - Step Functions (coming in Sprint 3)
+- **Lambda Functions**:
+  - `intake-lambda`: Processes emails from S3
+  - `process-attachment-lambda`: Optimizes images with Sharp
+- **Claude Code Container**: Runs locally or in Docker
 
-## Hybrid Mode Details
+### LocalStack Endpoints
+All AWS services are available at `http://localhost:4566`:
+- S3: `aws --endpoint-url=http://localhost:4566 s3 ls`
+- Lambda: `aws --endpoint-url=http://localhost:4566 lambda list-functions`
+- SQS: `aws --endpoint-url=http://localhost:4566 sqs list-queues`
+- DynamoDB: `aws --endpoint-url=http://localhost:4566 dynamodb list-tables`
 
-### How It Works
-1. **Hermes** runs in Docker container (handles SQS routing)
-2. **Claude** runs as local Node.js process (uses your macOS Keychain)
-3. Both connect to the same AWS SQS queues
+**Important**: Use test credentials for LocalStack:
+```bash
+export AWS_ACCESS_KEY_ID=test
+export AWS_SECRET_ACCESS_KEY=test
+```
 
 ### Prerequisites
-- Node.js installed locally (`brew install node`)
-- Claude Code authenticated (`claude` command works in terminal)
-- AWS credentials configured
+- Docker Desktop installed and running
+- Node.js 20+ (`brew install node`)
+- AWS CLI (`brew install awscli`)
+- No AWS credentials needed (LocalStack uses test credentials)
 
-### Configuration Files
-- `claude-code-container/.env.local.hybrid` - Hybrid mode environment
-- `claude-code-container/run-local.sh` - Local execution script
+### Lambda Functions
 
-### Workspace Location
-- Hybrid mode: `/tmp/webordinary-workspace/`
-- Docker mode: `/workspace/` (inside container)
+#### intake-lambda
+- **Location**: `/hephaestus/lambdas/intake-lambda/`
+- **Purpose**: Process incoming emails from S3
+- **Trigger**: S3 ObjectCreated events on `emails/` prefix
+- **Actions**:
+  - Parses email using mailparser
+  - Extracts thread ID, project, and user
+  - Starts Step Functions execution
 
-## Critical Configuration
+#### process-attachment-lambda  
+- **Location**: `/hephaestus/lambdas/process-attachment-lambda/`
+- **Purpose**: Optimize email attachments
+- **Features**:
+  - Creates WebP versions for modern browsers
+  - Generates thumbnails (400px max)
+  - Creates web-optimized versions (1200px max)
+  - Uses Sharp for image processing (requires container deployment in production)
+  - Simplified JavaScript version for local testing
 
-### 1. Environment Variables
+#### Support Lambda Functions (Stubs)
+The following Lambda functions are automatically created as stubs by `start-local.sh`:
+- **check-active-job-lambda**: Checks for active jobs in DynamoDB
+- **rate-limited-claim-lambda**: Claims a job with rate limiting
+- **send-interrupt-lambda**: Sends interrupt messages
+- **record-interruption-lambda**: Records interruption events
+- **handle-timeout-lambda**: Handles Step Functions timeouts
 
-#### hermes/.env.local
+These stubs will be replaced with full implementations in Sprint 2 Day 6-7.
+
+### Building and Deploying Lambdas
+
+**Automatic Deployment:**
 ```bash
-# Must have AWS credentials
-AWS_PROFILE=personal
-AWS_REGION=us-west-2
-
-# Project configuration (in message-router.service.ts)
-# Update repoUrl to: https://github.com/jscotthorn/amelia-astro.git
+# start-local.sh automatically:
+# 1. Builds all Lambda functions with package.json
+# 2. Creates stubs for missing Lambda functions
+# 3. Deploys all functions to LocalStack
+# 4. Configures proper memory settings (256MB for intake, 1GB for attachments, 128MB for others)
+./scripts/start-local.sh
 ```
 
-#### claude-code-container/.env.local
+**Manual Deployment (if needed):**
 ```bash
-# CRITICAL: Must be /workspace not /workspace/amelia-astro
+# Build Lambda function
+cd hephaestus/lambdas/intake-lambda
+npm install
+npm run build
+
+# Package for deployment
+zip -r function.zip dist/ node_modules/
+
+# Deploy to LocalStack
+AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test \
+aws --endpoint-url=http://localhost:4566 lambda create-function \
+  --function-name intake-lambda \
+  --runtime nodejs20.x \
+  --handler dist/index.handler \
+  --zip-file fileb://function.zip \
+  --memory-size 256 \
+  --timeout 60
+```
+
+## Testing Workflow
+
+### 1. Start Services
+```bash
+./scripts/start-lambda-dev.sh
+```
+
+This will:
+- Start LocalStack container
+- Create S3 buckets and DynamoDB tables
+- Build and deploy Lambda functions
+- Configure S3 event triggers
+- Start Claude Code Container (optional)
+
+### 2. Send Test Email
+```bash
+./scripts/test-lambda-email.sh
+```
+
+This will:
+- Create a sample email file
+- Upload to S3 bucket `webordinary-ses-emails/emails/`
+- Trigger Lambda automatically via S3 event
+- Show Lambda logs and queue status
+
+### 3. Monitor Processing
+```bash
+# View LocalStack logs (includes Lambda execution)
+docker logs -f localstack-manual
+
+# Check Lambda function logs
+AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test \
+aws --endpoint-url=http://localhost:4566 \
+logs tail /aws/lambda/intake-lambda --since 5m
+
+# Monitor Claude container (if running)
+tail -f /tmp/webordinary-logs/claude-output.log
+```
+
+### 4. Verify Results
+```bash
+# List S3 objects
+AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test \
+aws --endpoint-url=http://localhost:4566 s3 ls s3://webordinary-ses-emails/
+
+# Check SQS queues
+AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test \
+aws --endpoint-url=http://localhost:4566 sqs get-queue-attributes \
+  --queue-url http://localhost:4566/000000000000/webordinary-input-amelia-scott.fifo \
+  --attribute-names All
+```
+
+## Common Issues and Solutions
+
+### LocalStack Won't Start
+```bash
+# Check if port 4566 is in use
+lsof -i :4566
+
+# Stop any running LocalStack instances
+docker stop localstack-main
+docker rm localstack-main
+
+# Restart with clean state
+rm -rf /Users/scott/Projects/webordinary/localstack-data
+./scripts/start-local.sh
+```
+
+### Lambda Not Triggering
+```bash
+# Verify S3 notification configuration
+AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test \
+aws --endpoint-url=http://localhost:4566 \
+s3api get-bucket-notification-configuration \
+--bucket webordinary-ses-emails
+
+# Check Lambda function exists
+AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test \
+aws --endpoint-url=http://localhost:4566 \
+lambda get-function --function-name intake-lambda
+```
+
+### TypeScript Build Errors
+```bash
+# Clean and rebuild
+cd hephaestus/lambdas/intake-lambda
+rm -rf dist/ node_modules/
+npm install
+npm run build
+```
+
+### Step Functions Limitations
+- **States.Format Not Supported**: LocalStack doesn't fully support the States.Format intrinsic function
+- **Workaround**: The state machine uses simplified parameters for local testing
+- **Impact**: Some states may fail locally but will work in production AWS
+- **Note**: This is a LocalStack limitation, not an issue with our implementation
+
+### Sharp Module Issues
+```bash
+# If you see "Could not load the 'sharp' module" error:
+# This is expected in LocalStack - Sharp requires platform-specific binaries
+# The process-attachment-lambda uses a simplified mock for local testing
+# Production deployment will use a Docker container with proper Sharp support
+```
+
+### S3 Bucket Not Created
+```bash
+# If S3 operations fail with "NoSuchBucket":
+AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test \
+aws --endpoint-url=http://localhost:4566 s3 mb s3://webordinary-ses-emails
+
+# Then reconfigure notifications:
+./scripts/start-local.sh
+```
+
+## Architecture Flow (New Lambda-based)
+
+```
+1. Email → S3 (webordinary-ses-emails bucket)
+2. S3 Event → Lambda (intake-lambda)
+3. Lambda parses email and extracts metadata
+4. Lambda starts Step Functions execution (Sprint 3)
+5. Step Functions orchestrates:
+   - Check for active jobs
+   - Process attachments (process-attachment-lambda)
+   - Send to container queue
+6. Container processes message:
+   - Polls from SQS queue
+   - Executes Claude Code
+   - Commits and pushes changes
+   - Deploys to S3
+7. Container sends callback to Step Functions
+```
+
+## Key Components
+
+### LocalStack Resources
+- **S3 Buckets**:
+  - `webordinary-ses-emails` (email storage)
+  - `media-source.amelia.webordinary.com` (attachments)
+  - `edit.amelia.webordinary.com` (deployed site)
+  
+- **SQS Queues**:
+  - `webordinary-input-amelia-scott.fifo` (work queue)
+  - `webordinary-interrupts-amelia-scott` (interrupt queue)
+  - `webordinary-dlq-amelia-scott` (dead letter queue)
+  
+- **DynamoDB Tables**:
+  - `webordinary-active-jobs` (job tracking)
+  - `webordinary-thread-mappings` (thread management)
+
+### Environment Variables
+
+#### Lambda Functions
+```bash
+# Automatically set by LocalStack
+AWS_REGION=us-east-1
+STATE_MACHINE_ARN=arn:aws:states:us-east-1:000000000000:stateMachine:email-processor
+```
+
+#### Claude Code Container (.env.local)
+```bash
+# Use LocalStack endpoints
+AWS_ENDPOINT_URL=http://localhost:4566
+AWS_REGION=us-east-1
+AWS_ACCESS_KEY_ID=test
+AWS_SECRET_ACCESS_KEY=test
+
+# Workspace configuration
 WORKSPACE_PATH=/workspace
 
 # GitHub token for pushing branches
 GITHUB_TOKEN=your_github_pat_token
-
-# AWS
-AWS_PROFILE=personal
-AWS_REGION=us-west-2
 ```
 
-### 2. Code Fixes Required
+## Migration from Hermes
 
-#### Fix 1: Repository URL (hermes/src/modules/message-processor/message-router.service.ts)
-```typescript
-// Line 47 - Update to correct GitHub repo
-repoUrl: 'https://github.com/jscotthorn/amelia-astro.git',
-```
+### What Changed
+- **Removed**: Hermes service and all dependencies
+- **Removed**: Direct SQS polling from email queue
+- **Added**: Lambda functions for email processing
+- **Added**: LocalStack for AWS service mocking
+- **Added**: S3 event-driven architecture
 
-#### Fix 2: Claim Parsing (claude-code-container/src/services/queue-manager.service.ts)
-```typescript
-// Line 390 - Split on '#' not '-'
-const [projectId, userId] = this.currentProjectKey.split('#');
-```
+### Scripts to Update
+If you have custom scripts, update them to:
+1. Remove Hermes container references
+2. Use LocalStack endpoints (http://localhost:4566)
+3. Use test AWS credentials
+4. Trigger via S3 uploads instead of SQS messages
 
-#### Fix 3: AWS CLI Multi-arch (claude-code-container/Dockerfile)
-```dockerfile
-# Lines 32-41 - Support ARM64 Macs
-RUN ARCH=$(dpkg --print-architecture) && \
-    if [ "$ARCH" = "arm64" ] || [ "$ARCH" = "aarch64" ]; then \
-        curl "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o "awscliv2.zip"; \
-    else \
-        curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"; \
-    fi && \
-    unzip awscliv2.zip && \
-    ./aws/install && \
-    rm -rf awscliv2.zip aws/
-```
+## Current Status (Sprint 2 Day 4-5 Complete)
 
-#### Fix 4: MJML Import (hermes/src/modules/email-processor/email-processor.service.ts)
-```typescript
-// Line 6 - Use CommonJS require
-const mjml2html = require('mjml');
-```
+### ✅ Completed
+- Lambda functions: intake-lambda, process-attachment-lambda
+- Step Functions state machine definition and deployment
+- LocalStack integration with all AWS services
+- Unified development scripts
+- S3 event triggers
+- Automatic stub Lambda generation
 
-#### Fix 5: Branch Name Duplication (claude-code-container/src/message-processor.service.ts)
-```typescript
-// Line 194 - Check if thread- prefix exists
-const branch = chatThreadId.startsWith('thread-') ? chatThreadId : `thread-${chatThreadId}`;
-```
+### 🚧 In Progress (Sprint 2 Day 6-7)
+- Support Lambda implementations (currently stubs):
+  - check-active-job-lambda
+  - rate-limited-claim-lambda
+  - record-interruption-lambda
+  - handle-timeout-lambda
+- Unit tests with mocked AWS services
 
-#### Fix 6: Claude Simulation Path (claude-code-container/src/services/claude-executor.service.ts)
-```typescript
-// Lines 30-34 - Use project path from context
-const projectPath = context?.projectPath || this.workspacePath;
-const testFilePath = path.join(projectPath, 'test-page.html');
+### 📅 Upcoming (Sprint 3)
+- Production CDK deployment
+- CloudWatch integration
+- Error handling and retry improvements
+- Performance optimization
 
-// Lines 53-59 - Return filesChanged array
-return {
-  success: true,
-  output: `Simulated: ${instruction}`,
-  summary: 'Test file created successfully',
-  filesChanged: ['test-page.html']
-};
-```
+## Support
 
-#### Fix 7: Pass Project Path to Claude (claude-code-container/src/message-processor.service.ts)
-```typescript
-// Lines 231-238 - Add project path to context
-const projectPath = this.getProjectPath();
-const contextWithPath = {
-  ...message.context,
-  projectPath
-};
-const result = await this.claudeExecutor.execute(
-  message.instruction,
-  contextWithPath
-);
-```
-
-## Claude SDK Configuration
-
-### Authentication Methods
-
-#### Hybrid Mode (Local)
-- Uses your macOS Keychain via `claude` CLI
-- No API key needed in environment
-- `CLAUDE_CODE_USE_BEDROCK=0` in `.env.local.hybrid`
-
-#### Docker Mode  
-- Uses AWS Bedrock
-- `CLAUDE_CODE_USE_BEDROCK=1` in `.env.local`
-- Authenticated via AWS credentials
-
-#### API Key Mode (Future)
-- Set `ANTHROPIC_API_KEY` environment variable
-- Set `CLAUDE_CODE_USE_BEDROCK=0`
-- Not currently implemented (Keychain is preferred)
-
-### SDK Implementation
-- Located in `claude-code-container/src/services/claude-executor.service.ts`
-- Uses `@anthropic-ai/claude-code` TypeScript SDK
-- Streams messages via async iteration
-- Detects file changes via Git operations
-
-## Common Issues and Solutions
-
-### Docker Build Cache Issues
-```bash
-# Clear cache and rebuild
-./scripts/start-local-dev.sh --clean
-```
-
-### Containers Won't Start
-```bash
-# Nuclear option - clear everything
-docker stop hermes-manual claude-manual
-docker rm hermes-manual claude-manual
-docker buildx prune -af
-./scripts/start-local-dev.sh
-```
-
-### Hermes Socket Errors
-```bash
-# Restart Hermes
-docker restart hermes-manual
-```
-
-### Git Push Failures
-- Verify GitHub token in claude-code-container/.env.local
-- Check repository exists: https://github.com/jscotthorn/amelia-astro
-- Ensure branch doesn't already exist on GitHub
-
-### No Commits Being Made
-- Check WORKSPACE_PATH is `/workspace` not `/workspace/amelia-astro`
-- Verify Claude simulation is returning filesChanged array
-- Check git operations are using correct project path
-
-## Testing Workflow
-
-1. **Start Services**
-   ```bash
-   ./scripts/start-local-dev.sh
-   ```
-
-2. **Send Test Email**
-   ```bash
-   ./scripts/send-test-email.sh
-   ```
-
-3. **Monitor Processing**
-   ```bash
-   # Watch logs
-   docker logs -f claude-manual
-   
-   # Check for key events:
-   # - "Successfully claimed ameliastamps#scott"
-   # - "Cloned repository from https://github.com/jscotthorn/amelia-astro.git"
-   # - "Created test file: /workspace/ameliastamps/scott/amelia-astro/test-page.html"
-   # - "Committed: Change..."
-   # - "Pushed branch thread-... successfully"
-   ```
-
-4. **Verify on GitHub**
-   ```bash
-   # Check branches
-   git ls-remote https://github.com/jscotthorn/amelia-astro.git | grep thread
-   
-   # Clone and verify
-   git clone -b thread-<branch-name> https://github.com/jscotthorn/amelia-astro.git /tmp/verify
-   ls -la /tmp/verify/test-page.html
-   ```
-
-## Architecture Flow
-
-```
-1. Email → SQS (webordinary-email-queue)
-2. Hermes picks up from SQS
-3. Hermes identifies project/user (ameliastamps/scott)
-4. Hermes sends to unclaimed queue
-5. Container claims project
-6. Container polls project queue (webordinary-input-ameliastamps-scott)
-7. Container processes message:
-   - Clones repo from GitHub
-   - Creates branch (thread-...)
-   - Runs Claude simulation
-   - Creates test file
-   - Commits changes
-   - Pushes to GitHub
-8. Container sends response to output queue
-```
-
-## Key Paths and Queues
-
-- **Workspace**: `/workspace/ameliastamps/scott/amelia-astro/`
-- **Unclaimed Queue**: `webordinary-unclaimed`
-- **Input Queue**: `webordinary-input-ameliastamps-scott`
-- **Output Queue**: `webordinary-output-ameliastamps-scott`
-- **GitHub Repo**: `https://github.com/jscotthorn/amelia-astro.git`
-- **S3 Bucket**: `edit.amelia.webordinary.com` (for production)
-
-## Required AWS Resources
-
-All resources should exist in `us-west-2` region with `personal` profile:
-
-- SQS Queues:
-  - webordinary-email-queue
-  - webordinary-unclaimed
-  - webordinary-input-ameliastamps-scott
-  - webordinary-output-ameliastamps-scott
-  
-- DynamoDB Tables:
-  - webordinary-thread-mappings
-  - webordinary-container-ownership
-  
-- S3 Buckets:
-  - edit.amelia.webordinary.com (optional for local)
+For issues or questions:
+- Check LocalStack logs: `docker logs localstack-main`
+- Verify AWS CLI works: `AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test aws --endpoint-url=http://localhost:4566 s3 ls`
+- Ensure Docker is running: `docker ps`
+- Review Lambda logs in LocalStack output
+- Check Step Functions execution: `AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test aws --endpoint-url=http://localhost:4566 stepfunctions list-executions --state-machine-arn arn:aws:states:us-east-1:000000000000:stateMachine:email-processor`
