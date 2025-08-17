@@ -1,7 +1,7 @@
 # Step Functions Refactor Status
 
 ## Completed
-- [x] Documentation updates (Sprint 0)
+- [x] Documentation updates (Sprint 0) - 2025-08-17
   - [x] Updated `/CLAUDE.md` with refactor notice
   - [x] Updated `/README.md` with refactor banner
   - [x] Updated `/hermes/CLAUDE.md` with deprecation notice
@@ -9,8 +9,15 @@
   - [x] Updated `/hephaestus/CLAUDE.md` with infrastructure changes
   - [x] Created `/docs/REFACTOR_STATUS.md` tracking document
 
+- [x] Sprint 1 Day 1: Infrastructure teardown - 2025-08-17
+  - [x] Scaled Hermes service to 0 in ECS
+  - [x] Deleted HermesStack from CloudFormation
+  - [x] Deleted webordinary-email-queue
+  - [x] Deleted all Hermes container images and ECR repository
+  - [x] Documented final Hermes configuration
+
 ## In Progress
-- [ ] Sprint 1: Infrastructure teardown
+- [ ] Sprint 1 Day 2-3: Manual resource creation for Amelia project
 
 ## Upcoming
 - [ ] Sprint 2: Lambda functions
