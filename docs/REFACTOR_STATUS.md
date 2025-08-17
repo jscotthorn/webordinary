@@ -36,13 +36,17 @@
   - [x] Successfully tested both Lambda functions
   - [x] Validated complete email processing flow
 
+- [x] Sprint 2 Day 6-7: Support Lambda functions - 2025-08-17
+  - [x] check-active-job-lambda: DynamoDB check + interrupt send
+  - [x] rate-limited-claim-lambda: Conditional DynamoDB writes with TTL
+  - [x] record-interruption-lambda: Audit trail
+  - [x] handle-timeout-lambda: Timeout handling
+  - [x] send-interrupt-lambda: Interrupt message dispatch
+  - [x] Unit tests with mocked AWS services
+  - [x] Fixed local development script for proper AWS credentials
+  - [x] Tested full Step Functions flow with all Lambda functions
+
 ## In Progress
-- [ ] Sprint 2 Day 6-7: Support Lambda functions
-  - [ ] check-active-job-lambda: DynamoDB check + interrupt send
-  - [ ] rate-limited-claim-lambda: Conditional DynamoDB writes
-  - [ ] record-interruption-lambda: Audit trail
-  - [ ] handle-timeout-lambda: Timeout handling
-  - [ ] Unit tests with mocked AWS services
 
 ## Upcoming
 - [ ] Sprint 3: Step Functions deployment

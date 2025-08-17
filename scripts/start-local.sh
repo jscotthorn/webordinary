@@ -128,7 +128,7 @@ docker run -d --name localstack-main \
 # Wait for LocalStack to be ready
 echo -e "${YELLOW}▶ Waiting for LocalStack to initialize...${NC}"
 for i in {1..30}; do
-    if aws --endpoint-url=http://localhost:4566 s3 ls 2>/dev/null; then
+    if AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test aws --endpoint-url=http://localhost:4566 s3 ls 2>/dev/null; then
         echo -e "${GREEN}✓ LocalStack is ready${NC}"
         break
     fi
@@ -142,26 +142,26 @@ echo -e "\n${BLUE}═══ Creating AWS Resources ═══${NC}"
 # S3 Buckets
 echo -e "${YELLOW}▶ Creating S3 buckets...${NC}"
 for bucket in webordinary-ses-emails media-source.amelia.webordinary.com edit.amelia.webordinary.com; do
-    aws --endpoint-url=http://localhost:4566 s3 mb s3://$bucket 2>/dev/null || true
+    AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test aws --endpoint-url=http://localhost:4566 s3 mb s3://$bucket 2>/dev/null || true
     [ "$VERBOSE" = true ] && echo "  Created: $bucket" || true
 done
 echo -e "${GREEN}✓ S3 buckets ready${NC}"
 
 # DynamoDB Tables
 echo -e "${YELLOW}▶ Creating DynamoDB tables...${NC}"
-aws --endpoint-url=http://localhost:4566 dynamodb create-table \
+AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test aws --endpoint-url=http://localhost:4566 dynamodb create-table \
   --table-name webordinary-active-jobs \
   --attribute-definitions AttributeName=projectUserId,AttributeType=S \
   --key-schema AttributeName=projectUserId,KeyType=HASH \
   --billing-mode PAY_PER_REQUEST 2>/dev/null || true
 
-aws --endpoint-url=http://localhost:4566 dynamodb create-table \
+AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test aws --endpoint-url=http://localhost:4566 dynamodb create-table \
   --table-name webordinary-thread-mappings \
   --attribute-definitions AttributeName=threadId,AttributeType=S \
   --key-schema AttributeName=threadId,KeyType=HASH \
   --billing-mode PAY_PER_REQUEST 2>/dev/null || true
 
-aws --endpoint-url=http://localhost:4566 dynamodb create-table \
+AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test aws --endpoint-url=http://localhost:4566 dynamodb create-table \
   --table-name webordinary-interruptions \
   --attribute-definitions AttributeName=messageId,AttributeType=S \
   --key-schema AttributeName=messageId,KeyType=HASH \
@@ -171,15 +171,15 @@ echo -e "${GREEN}✓ DynamoDB tables ready${NC}"
 
 # SQS Queues
 echo -e "${YELLOW}▶ Creating SQS queues...${NC}"
-aws --endpoint-url=http://localhost:4566 sqs create-queue \
+AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test aws --endpoint-url=http://localhost:4566 sqs create-queue \
   --queue-name webordinary-input-amelia-scott.fifo \
   --attributes FifoQueue=true,ContentBasedDeduplication=true,VisibilityTimeout=3600 2>/dev/null || true
 
-aws --endpoint-url=http://localhost:4566 sqs create-queue \
+AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test aws --endpoint-url=http://localhost:4566 sqs create-queue \
   --queue-name webordinary-interrupts-amelia-scott \
   --attributes VisibilityTimeout=60 2>/dev/null || true
 
-aws --endpoint-url=http://localhost:4566 sqs create-queue \
+AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test aws --endpoint-url=http://localhost:4566 sqs create-queue \
   --queue-name webordinary-dlq-amelia-scott \
   --attributes MessageRetentionPeriod=1209600 2>/dev/null || true
 
@@ -232,8 +232,7 @@ if [ -d "$LAMBDA_DIR" ]; then
             zip -qr function.zip $FILES_TO_ZIP -x "*.ts" "*.test.*" "node_modules/aws-sdk/*" "node_modules/@types/*"
             
             # Deploy or update Lambda
-            AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test \
-            aws --endpoint-url=http://localhost:4566 lambda create-function \
+            AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test aws --endpoint-url=http://localhost:4566 lambda create-function \
                 --function-name $lambda_name \
                 --runtime nodejs20.x \
                 --role arn:aws:iam::000000000000:role/lambda-role \
@@ -241,10 +240,9 @@ if [ -d "$LAMBDA_DIR" ]; then
                 --zip-file fileb://function.zip \
                 --timeout 60 \
                 --memory-size $MEMORY_SIZE \
-                --environment "Variables={AWS_LAMBDA_FUNCTION_NAME=$lambda_name}" \
+                --environment "Variables={AWS_LAMBDA_FUNCTION_NAME=$lambda_name,DYNAMODB_ENDPOINT=http://host.docker.internal:4566,SQS_ENDPOINT=http://host.docker.internal:4566,TABLE_NAME=webordinary-active-jobs,INTERRUPTIONS_TABLE=webordinary-interruptions,ACTIVE_JOBS_TABLE=webordinary-active-jobs}" \
                 2>/dev/null || \
-            AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test \
-            aws --endpoint-url=http://localhost:4566 lambda update-function-code \
+            AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test aws --endpoint-url=http://localhost:4566 lambda update-function-code \
                 --function-name $lambda_name \
                 --zip-file fileb://function.zip \
                 2>/dev/null
@@ -275,8 +273,7 @@ EOF
             cd "$LAMBDA_DIR/$lambda_name"
             zip -qr function.zip index.js
             
-            AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test \
-            aws --endpoint-url=http://localhost:4566 lambda create-function \
+            AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test aws --endpoint-url=http://localhost:4566 lambda create-function \
                 --function-name $lambda_name \
                 --runtime nodejs20.x \
                 --role arn:aws:iam::000000000000:role/lambda-role \
@@ -284,7 +281,7 @@ EOF
                 --zip-file fileb://function.zip \
                 --timeout 60 \
                 --memory-size $MEMORY_SIZE \
-                --environment "Variables={AWS_LAMBDA_FUNCTION_NAME=$lambda_name}" \
+                --environment "Variables={AWS_LAMBDA_FUNCTION_NAME=$lambda_name,DYNAMODB_ENDPOINT=http://host.docker.internal:4566,SQS_ENDPOINT=http://host.docker.internal:4566,TABLE_NAME=webordinary-active-jobs,INTERRUPTIONS_TABLE=webordinary-interruptions,ACTIVE_JOBS_TABLE=webordinary-active-jobs}" \
                 2>/dev/null
             
             echo -e "${GREEN}  ✓ $lambda_name deployed (stub)${NC}"
