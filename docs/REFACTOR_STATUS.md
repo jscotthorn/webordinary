@@ -46,6 +46,15 @@
   - [x] Fixed local development script for proper AWS credentials
   - [x] Tested full Step Functions flow with all Lambda functions
 
+- [x] Sprint 3 Day 8-9: CDK Infrastructure - 2025-08-17
+  - [x] Created LambdaStack with all 7 Lambda functions
+  - [x] Updated StepFunctionsStack to reference Lambda ARNs
+  - [x] Fixed Lambda function names in ASL definition
+  - [x] Added SES bucket to SqsStack
+  - [x] Added active-jobs and interruptions tables to SqsStack
+  - [x] Updated CDK app to include new stacks
+  - [x] Commented out deprecated HermesStack
+
 ## In Progress
 
 ## Upcoming
