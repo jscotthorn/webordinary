@@ -16,8 +16,15 @@
   - [x] Deleted all Hermes container images and ECR repository
   - [x] Documented final Hermes configuration
 
+- [x] Sprint 1 Day 2-3: Manual resource creation - 2025-08-17
+  - [x] Created media-source.amelia.webordinary.com bucket
+  - [x] Configured bucket encryption, versioning, and lifecycle
+  - [x] Created webordinary-interrupts-amelia-scott queue
+  - [x] Updated queue visibility timeouts
+  - [x] Deferred CDK resources (SES bucket, active-jobs table)
+
 ## In Progress
-- [ ] Sprint 1 Day 2-3: Manual resource creation for Amelia project
+- [ ] Sprint 2: Lambda functions development
 
 ## Upcoming
 - [ ] Sprint 2: Lambda functions
