@@ -1,5 +1,18 @@
 # WebOrdinary Quick Reference
 
+# ⚠️ MAJOR REFACTOR IN PROGRESS
+
+## Current State (As of 2025-08-17)
+- Replacing Hermes with AWS Step Functions
+- DO NOT modify Hermes code - it will be deleted
+- See REFACTOR_PROPOSAL.md for architecture changes
+
+## During Refactor
+- Email flow: SES → S3 → Lambda → Step Functions → Container
+- Hermes service will be scaled to 0 but code remains temporarily
+- New Lambda functions being added in `/lambda/` directories
+- Container message handling being updated for Step Functions callbacks
+
 ## Architecture (S3-based, Sprint 7+)
 Email → SQS → Hermes → Container → S3 → User
 

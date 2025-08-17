@@ -1,5 +1,7 @@
 # WebOrdinary
 
+> ⚠️ **MAJOR REFACTOR IN PROGRESS**: Replacing Hermes with AWS Step Functions. See [REFACTOR_PROPOSAL.md](refactor_authority/REFACTOR_PROPOSAL.md) for details. DO NOT modify Hermes code during this refactor.
+
 An AI Agent-based CMS SaaS platform that enables users to manage websites through natural language instructions. Built on Astro for static site generation with S3 hosting, and Claude Code running in Fargate containers for intelligent content management.
 
 ## 🏗️ Current Architecture (Sprint 6/7 - S3 Static Hosting)

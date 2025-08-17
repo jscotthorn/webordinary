@@ -1,3 +1,11 @@
+# ⚠️ UNDERGOING REFACTOR
+
+Message handling is being updated from Hermes to Step Functions.
+Key changes:
+- Adding Step Functions callback support
+- Adding interrupt handling via separate queue
+- Heartbeat mechanism for long-running tasks
+
 # Container Quick Reference
 
 **Build**: `docker build --platform linux/amd64 -t webordinary/claude-code .`
