@@ -1,7 +1,6 @@
-import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import type { QueueManagerService } from './queue-manager.service';
 
 const execAsync = promisify(exec);
 
@@ -10,10 +9,7 @@ export class GitService {
   private readonly logger = new Logger(GitService.name);
   private readonly workspacePath: string;
 
-  constructor(
-    @Inject(forwardRef(() => require('./queue-manager.service').QueueManagerService))
-    private readonly queueManager: QueueManagerService,
-  ) {
+  constructor() {
     this.workspacePath = process.env.WORKSPACE_PATH || '/workspace';
     // Configure git credentials on initialization
     this.configureGitCredentials().catch(err => 
@@ -273,13 +269,9 @@ export class GitService {
   }
 
   private getProjectPath(): string {
-    const claim = this.queueManager.getCurrentClaim();
-    if (!claim) {
-      // Fallback for legacy tests or initialization
-      return `${this.workspacePath}/unclaimed/workspace`;
-    }
-    const { projectId, userId } = claim;
-    // Base path without repo name
+    // Use environment variables or default path
+    const projectId = process.env.PROJECT_ID || 'default';
+    const userId = process.env.USER_ID || 'user';
     return `${this.workspacePath}/${projectId}/${userId}`;
   }
 
@@ -296,12 +288,9 @@ export class GitService {
 
   async initRepository(repoUrl?: string): Promise<void> {
     try {
-      const claim = this.queueManager.getCurrentClaim();
-      if (!claim) {
-        this.logger.warn('No active claim, cannot initialize repository');
-        return;
-      }
-      const { projectId: clientId, userId } = claim;
+      // Use environment variables or passed parameters
+      const clientId = process.env.PROJECT_ID || 'default';
+      const userId = process.env.USER_ID || 'user';
       
       // Extract repo name from URL if provided
       let repoName = 'workspace'; // default

@@ -1,23 +1,33 @@
 /**
- * Shared message types for queue communication between Hermes and Claude Container
+ * Message types for Step Functions integration
  */
 
 /**
- * Base message structure for all queue messages
+ * Message format received from Step Functions via SQS
  */
-export interface BaseQueueMessage {
+export interface StepFunctionMessage {
   /**
-   * Type of message - determines how it should be processed
+   * Task token for Step Functions callback
    */
-  type?: 'claim_request' | 'work' | 'response';
+  taskToken: string;
   
   /**
-   * Unique session identifier
+   * Unique message identifier
    */
-  sessionId: string;
+  messageId: string;
   
   /**
-   * Project identifier (e.g., 'ameliastamps')
+   * Instruction to execute
+   */
+  instruction: string;
+  
+  /**
+   * Thread identifier for git branch management
+   */
+  threadId: string;
+  
+  /**
+   * Project identifier (e.g., 'amelia')
    */
   projectId: string;
   
@@ -27,56 +37,9 @@ export interface BaseQueueMessage {
   userId: string;
   
   /**
-   * Timestamp when message was created
+   * Attachments if any
    */
-  timestamp: string;
-  
-  /**
-   * Source of the message (email, api, etc.)
-   */
-  source?: string;
-}
-
-/**
- * Claim request message sent to unclaimed queue
- */
-export interface ClaimRequestMessage extends BaseQueueMessage {
-  type: 'claim_request';
-}
-
-/**
- * Work message sent to project input queue
- */
-export interface WorkMessage extends BaseQueueMessage {
-  type: 'work';
-  
-  /**
-   * Repository URL for the project
-   */
-  repoUrl: string;
-  
-  /**
-   * Instruction to execute
-   */
-  instruction: string;
-  
-  /**
-   * Original email/request details
-   */
-  from?: string;
-  subject?: string;
-  body?: string;
-  
-  /**
-   * Thread identifiers for conversation continuity
-   */
-  threadId?: string;
-  chatThreadId?: string;
-  
-  /**
-   * Command identifier for tracking
-   */
-  commandId?: string;
+  attachments?: any[];
   
   /**
    * Additional context for the instruction
@@ -88,20 +51,18 @@ export interface WorkMessage extends BaseQueueMessage {
 }
 
 /**
- * Response message sent to output queue
+ * Response sent back to Step Functions
  */
-export interface ResponseMessage extends BaseQueueMessage {
-  type: 'response';
-  
-  /**
-   * Command ID this response is for
-   */
-  commandId: string;
-  
+export interface StepFunctionResponse {
   /**
    * Whether the operation was successful
    */
   success: boolean;
+  
+  /**
+   * Unique message identifier
+   */
+  messageId: string;
   
   /**
    * Summary of what was done
@@ -114,9 +75,9 @@ export interface ResponseMessage extends BaseQueueMessage {
   filesChanged?: string[];
   
   /**
-   * Preview URL for the deployed site
+   * Deployed site URL
    */
-  previewUrl?: string;
+  siteUrl?: string;
   
   /**
    * Build success status
@@ -127,40 +88,74 @@ export interface ResponseMessage extends BaseQueueMessage {
    * Deploy success status
    */
   deploySuccess?: boolean;
-  
-  /**
-   * Error message if operation failed
-   */
-  error?: string;
-  
-  /**
-   * Error code for categorization
-   */
-  errorCode?: string;
-  
-  /**
-   * Whether the process was interrupted
-   */
-  interrupted?: boolean;
 }
 
 /**
- * Type guard to check if message is a claim request
+ * Interrupt message format
  */
-export function isClaimRequest(message: BaseQueueMessage): message is ClaimRequestMessage {
-  return message.type === 'claim_request';
+export interface InterruptMessage {
+  /**
+   * Reason for interruption
+   */
+  reason: string;
+  
+  /**
+   * New thread that is taking over
+   */
+  newThreadId: string;
+  
+  /**
+   * New message ID
+   */
+  newMessageId: string;
+  
+  /**
+   * Timestamp of interruption
+   */
+  timestamp: number;
 }
 
 /**
- * Type guard to check if message is a work message
+ * Active job record in DynamoDB
  */
-export function isWorkMessage(message: BaseQueueMessage): message is WorkMessage {
-  return message.type === 'work' && 'instruction' in message && 'repoUrl' in message;
-}
-
-/**
- * Type guard to check if message is a response message
- */
-export function isResponseMessage(message: BaseQueueMessage): message is ResponseMessage {
-  return message.type === 'response' && 'commandId' in message && 'success' in message;
+export interface ActiveJob {
+  /**
+   * Composite key: projectId#userId
+   */
+  projectUserKey: string;
+  
+  /**
+   * Message identifier
+   */
+  messageId: string;
+  
+  /**
+   * Step Functions task token
+   */
+  taskToken: string;
+  
+  /**
+   * SQS receipt handle
+   */
+  receiptHandle: string;
+  
+  /**
+   * Thread identifier
+   */
+  threadId: string;
+  
+  /**
+   * Container processing this job
+   */
+  containerId: string;
+  
+  /**
+   * Timestamp when job started
+   */
+  startTime: number;
+  
+  /**
+   * TTL for DynamoDB expiration
+   */
+  ttl: number;
 }

@@ -44,6 +44,7 @@ Email → SES → SQS(webordinary-email-queue) → Hermes → Parse/Route → SQ
 
 ## 2. Target Architecture
 
+### Email Intake Flow
 ```mermaid
 sequenceDiagram
     participant Email
@@ -51,19 +52,28 @@ sequenceDiagram
     participant S3Raw as S3 (email-raw)
     participant Intake as Intake Lambda
     participant SF as Step Functions
-    participant Parse as Parse Lambda
-    participant S3Media as S3 (media-source)
-    participant Process as Process Attachment
-    participant DDB as DynamoDB
-    participant SQS
-    participant Container as Claude Container
     
     Email->>SES: Incoming message
     SES->>S3Raw: Store raw MIME via S3 action (30-day lifecycle)
     S3Raw->>Intake: S3 event triggers Lambda
     Intake->>SF: StartExecution({bucket, key, messageId})
     Note over Intake: Uses SES Message-Id as execution name (idempotent)
+    Note over SF: Continues to Processing Flow...
+```
+
+### Step Functions Processing Flow
+```mermaid
+sequenceDiagram
+    participant SF as Step Functions
+    participant Parse as Parse Lambda
+    participant S3Raw as S3 (email-raw)
+    participant S3Media as S3 (media-source)
+    participant Process as Process Attachment
+    participant DDB as DynamoDB
+    participant SQS
+    participant Container as Claude Container
     
+    Note over SF: ...Continues from Intake Flow
     SF->>Parse: Parse email from S3
     Parse->>S3Raw: Fetch raw email
     Parse->>SF: Return parsed data
@@ -88,7 +98,7 @@ sequenceDiagram
         SF->>SQS: SendMessage.waitForTaskToken (FIFO queue)
     else No owner
         SF->>SQS: SendMessage.waitForTaskToken (FIFO queue)
-        SF->>Lambda: Rate-limited claim request
+        SF->>SQS: Send claim request (unclaimed queue)
     end
     
     Container->>SQS: Poll work queue (FIFO)

@@ -2,10 +2,6 @@ import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { Logger } from '@nestjs/common';
-import { GitService } from './services/git.service';
-import { S3SyncService } from './services/s3-sync.service';
-import { QueueManagerService } from './services/queue-manager.service';
-import { MessageProcessor } from './services/message-processor.service';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
@@ -15,52 +11,10 @@ async function bootstrap() {
     logger: ['error', 'warn', 'log', 'debug'],
   });
 
-  // Get services
-  const gitService = app.get(GitService);
-  const s3SyncService = app.get(S3SyncService);
-  const queueManager = app.get(QueueManagerService);
-  const messageProcessor = app.get(MessageProcessor);
-
-  // Repository initialization removed - will be handled per message
-  // Containers are now generic and claim work dynamically
-  // Repository URL comes from work messages, not environment
-
-  // Check AWS CLI availability
-  const hasAwsCli = await s3SyncService.checkAwsCli();
-  if (!hasAwsCli) {
-    logger.error('AWS CLI not found - S3 sync will not work');
-  } else {
-    logger.log('AWS CLI available for S3 sync');
-  }
-
-  // Initialize queue manager for claiming projects
-  logger.log('Initializing queue manager...');
-  await queueManager.initialize();
-
-  // Set up message processing when queue manager receives messages
-  queueManager.on('message', async (messageData: any) => {
-    logger.log(`Processing message from claimed project queue`);
-    try {
-      // Process the message using existing message processor
-      await messageProcessor.handleMessage({
-        Body: JSON.stringify(messageData.body),
-        ReceiptHandle: messageData.receiptHandle,
-      } as any);
-    } catch (error: any) {
-      logger.error(`Failed to process message: ${error.message}`);
-    }
-  });
-
-  // Graceful shutdown
+  // Graceful shutdown handlers
   const shutdown = async () => {
     logger.log('Shutting down gracefully...');
-
-    // Shutdown queue manager
-    await queueManager.shutdown();
-
-    // Close NestJS app
     await app.close();
-
     process.exit(0);
   };
 
@@ -68,20 +22,21 @@ async function bootstrap() {
   process.on('SIGINT', shutdown);
 
   // Log startup information
-  logger.log('Container started successfully');
+  logger.log('Generic container started with Step Functions integration');
   logger.log(`- Workspace: ${process.env.WORKSPACE_PATH || '/workspace'}`);
-  logger.log('- Ready to claim projects and process messages');
-
-  if (process.env.UNCLAIMED_QUEUE_URL) {
-    logger.log(`- Monitoring unclaimed queue: ${process.env.UNCLAIMED_QUEUE_URL}`);
-  } else {
-    logger.warn('- No UNCLAIMED_QUEUE_URL provided, waiting for environment update');
-  }
-
-  if (process.env.OWNERSHIP_TABLE_NAME) {
-    logger.log(`- Using ownership table: ${process.env.OWNERSHIP_TABLE_NAME}`);
-  } else {
-    logger.log('- Using default ownership table: webordinary-container-ownership');
+  logger.log(`- Region: ${process.env.AWS_REGION || 'us-west-2'}`);
+  logger.log(`- Account: ${process.env.AWS_ACCOUNT_ID || '942734823970'}`);
+  logger.log(`- Unclaimed Queue: ${process.env.UNCLAIMED_QUEUE_URL || 'webordinary-unclaimed'}`);
+  logger.log(`- Ownership Table: ${process.env.OWNERSHIP_TABLE_NAME || 'webordinary-container-ownership'}`);
+  logger.log(`- Active Jobs Table: ${process.env.ACTIVE_JOBS_TABLE || 'webordinary-active-jobs'}`);
+  
+  logger.log('');
+  logger.log('Container is now polling the unclaimed queue for work...');
+  logger.log('When a project+user is claimed, it will poll their specific FIFO queue.');
+  logger.log('Container will release ownership after 5 minutes of inactivity.');
+  
+  if (process.env.CONTAINER_ID) {
+    logger.log(`- Container ID (override): ${process.env.CONTAINER_ID}`);
   }
 }
 

@@ -1,9 +1,8 @@
-import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import type { QueueManagerService } from './queue-manager.service';
 
 const execAsync = promisify(exec);
 
@@ -11,21 +10,23 @@ const execAsync = promisify(exec);
 export class S3SyncService {
   private readonly logger = new Logger(S3SyncService.name);
   private readonly workspacePath: string;
+  private currentContext: { projectId?: string; userId?: string } = {};
 
-  constructor(
-    @Inject(forwardRef(() => require('./queue-manager.service').QueueManagerService))
-    private readonly queueManager: QueueManagerService,
-  ) {
+  constructor() {
     this.workspacePath = process.env.WORKSPACE_PATH || '/workspace';
   }
 
+  /**
+   * Set the current project/user context for operations
+   */
+  setContext(projectId: string, userId: string): void {
+    this.currentContext = { projectId, userId };
+    this.logger.log(`S3 sync context set to project: ${projectId}, user: ${userId}`);
+  }
+
   private getProjectPath(): string {
-    const claim = this.queueManager.getCurrentClaim();
-    if (!claim) {
-      // Fallback for legacy tests or initialization
-      return path.join(this.workspacePath, 'unclaimed', 'workspace', 'amelia-astro');
-    }
-    const { projectId, userId } = claim;
+    const projectId = this.currentContext.projectId || 'amelia';
+    const userId = this.currentContext.userId || 'scott';
     return path.join(this.workspacePath, projectId, userId, 'amelia-astro');
   }
 
@@ -57,9 +58,9 @@ export class S3SyncService {
   /**
    * Sync built files to S3
    */
-  async syncToS3(clientId?: string): Promise<void> {
-    // Use provided clientId or fall back to environment variable
-    const bucketName = this.getBucketName(clientId);
+  async syncToS3(projectId?: string): Promise<void> {
+    // Use provided projectId or current context
+    const bucketName = this.getBucketName(projectId);
     const projectPath = this.getProjectPath();
     const distPath = path.join(projectPath, 'dist');
 
@@ -108,14 +109,14 @@ export class S3SyncService {
   /**
    * Build and deploy in one step
    */
-  async buildAndDeploy(clientId?: string): Promise<void> {
+  async buildAndDeploy(projectId?: string): Promise<void> {
     this.logger.log('Starting build and deploy process...');
     
     // Step 1: Build Astro
     await this.buildAstroProject();
     
     // Step 2: Sync to S3
-    await this.syncToS3(clientId);
+    await this.syncToS3(projectId);
     
     this.logger.log('Build and deploy completed successfully');
   }
@@ -123,12 +124,8 @@ export class S3SyncService {
   /**
    * Get the S3 bucket name based on client ID
    */
-  private getBucketName(clientId?: string): string {
-    if (clientId) {
-      return `edit.${clientId}.webordinary.com`;
-    }
-    const claim = this.queueManager.getCurrentClaim();
-    const id = claim?.projectId || 'amelia';
+  private getBucketName(projectId?: string): string {
+    const id = projectId || this.currentContext.projectId || 'amelia';
     return `edit.${id}.webordinary.com`;
   }
 
@@ -149,12 +146,8 @@ export class S3SyncService {
   /**
    * Get the public URL for the deployed site
    */
-  getDeployedUrl(clientId?: string): string {
-    if (clientId) {
-      return `https://edit.${clientId}.webordinary.com`;
-    }
-    const claim = this.queueManager.getCurrentClaim();
-    const id = claim?.projectId || 'amelia';
+  getDeployedUrl(projectId?: string): string {
+    const id = projectId || this.currentContext.projectId || 'amelia';
     return `https://edit.${id}.webordinary.com`;
   }
 }

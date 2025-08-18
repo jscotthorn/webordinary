@@ -1,36 +1,62 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { SqsMessageHandler, SqsConsumerEventHandler } from '@ssut/nestjs-sqs';
-import { SqsService } from '@ssut/nestjs-sqs';
 import { Message } from '@aws-sdk/client-sqs';
-import { spawn, ChildProcess, exec } from 'child_process';
+import { OnEvent } from '@nestjs/event-emitter';
+import { spawn, ChildProcess } from 'child_process';
 import { promisify } from 'util';
+import { exec } from 'child_process';
+
 import { ClaudeExecutorService } from './claude-executor.service';
 import { GitService } from './git.service';
 import { S3SyncService } from './s3-sync.service';
 import { CommitMessageService } from './commit-message.service';
-import { QueueManagerService } from './queue-manager.service';
-import type { ResponseMessage } from '../types/queue-messages';
-import { isWorkMessage } from '../types/queue-messages';
+import { StepFunctionsCallbackService } from './stepfunctions-callback.service';
+import { ActiveJobService } from './active-job.service';
+import { VisibilityExtensionService } from './visibility-extension.service';
+import { InterruptMessage } from './interrupt-handler.service';
+
+interface StepFunctionMessage {
+  taskToken: string;
+  messageId: string;
+  instruction: string;
+  threadId: string;
+  attachments?: any[];
+  projectId: string;
+  userId: string;
+}
 
 @Injectable()
-export class MessageProcessor {
+export class MessageProcessor implements OnModuleDestroy {
   private readonly logger = new Logger(MessageProcessor.name);
   private readonly workspacePath: string;
   private currentProcess: ChildProcess | null = null;
   private currentSessionId: string | null = null;
-  private currentCommandId: string | null = null;
+  private isProcessing = false;
+  private containerId: string;
 
   constructor(
-    private readonly sqsService: SqsService,
     private readonly claudeExecutor: ClaudeExecutorService,
     private readonly gitService: GitService,
     private readonly s3SyncService: S3SyncService,
     private readonly commitMessageService: CommitMessageService,
-    private readonly queueManager: QueueManagerService,
+    private readonly stepFunctions: StepFunctionsCallbackService,
+    private readonly activeJobs: ActiveJobService,
+    private readonly visibilityExtension: VisibilityExtensionService,
   ) {
     this.workspacePath = process.env.WORKSPACE_PATH || '/workspace';
+    this.containerId = process.env.CONTAINER_ID || `container-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   }
 
+  async onModuleDestroy() {
+    // Clean up on shutdown
+    await this.activeJobs.cleanup();
+    this.stepFunctions.stopHeartbeat();
+    this.visibilityExtension.stopExtension();
+  }
+
+  /**
+   * Handle messages from Step Functions via SQS FIFO queue
+   */
   @SqsMessageHandler('container-input', false)
   async handleMessage(message: Message) {
     if (!message.Body) {
@@ -38,107 +64,129 @@ export class MessageProcessor {
       return;
     }
 
-    const body = JSON.parse(message.Body);
+    const body: StepFunctionMessage = JSON.parse(message.Body);
+    const projectUserKey = `${body.projectId}#${body.userId}`;
 
-    // Validate it's a work message
-    if (!isWorkMessage(body)) {
-      this.logger.error(`Invalid message type: ${(body as any).type || 'undefined'}`);
+    this.logger.log(`Received Step Functions message for ${projectUserKey}`);
+    this.logger.log(`Task token: ${body.taskToken?.substring(0, 20)}...`);
+
+    // Prevent concurrent processing
+    if (this.isProcessing) {
+      this.logger.warn('Already processing a message, this should not happen with FIFO');
       return;
     }
 
-    this.logger.log(`Received work message for session ${body.sessionId}`);
-
-    // Initialize repository if repo URL is provided
-    if (body.repoUrl) {
-      this.logger.log(`Initializing repository from: ${body.repoUrl}`);
-      try {
-        await this.gitService.initRepository(body.repoUrl);
-      } catch (error: any) {
-        this.logger.warn(`Repository initialization failed (may already exist): ${error.message}`);
-        // Continue anyway - the repository might already be initialized
-      }
-    }
-
-    // Any new message interrupts current work
-    if (this.currentProcess) {
-      this.logger.warn(`Interrupting current command ${this.currentCommandId}`);
-      await this.interruptCurrentProcess();
-    }
-
-    // Switch git branch if different session
-    if (body.sessionId !== this.currentSessionId) {
-      await this.switchToSession(body.sessionId, body.chatThreadId);
-    }
-
-    // Process the new message
-    this.currentSessionId = body.sessionId;
-    this.currentCommandId = body.commandId;
+    this.isProcessing = true;
 
     try {
-      // Execute complete workflow with proper sequencing
+      // Register active job in DynamoDB
+      await this.activeJobs.registerJob({
+        projectUserKey,
+        messageId: body.messageId,
+        taskToken: body.taskToken,
+        receiptHandle: message.ReceiptHandle!,
+        threadId: body.threadId,
+        containerId: this.containerId,
+      });
+
+      // Start heartbeats to Step Functions (every 30 seconds)
+      this.stepFunctions.startHeartbeat(body.taskToken, 30);
+
+      // Start visibility timeout extensions (every 50 minutes)
+      const queueUrl = `https://sqs.${process.env.AWS_REGION || 'us-west-2'}.amazonaws.com/${process.env.AWS_ACCOUNT_ID || '942734823970'}/webordinary-input-${body.projectId}-${body.userId}.fifo`;
+      this.visibilityExtension.startExtension(message.ReceiptHandle!, queueUrl);
+
+      // Set S3 sync context for this project/user
+      this.s3SyncService.setContext(body.projectId, body.userId);
+
+      // Switch to the correct git branch
+      await this.switchToThread(body.threadId);
+
+      // Process the message
       const result = await this.executeCompleteWorkflow(body);
 
-      // Send success response
-      const successResponse: ResponseMessage = {
-        type: 'response',
-        sessionId: body.sessionId,
-        projectId: body.projectId,
-        userId: body.userId,
-        commandId: body.commandId || '',
-        timestamp: new Date().toISOString(),
+      // Send success callback to Step Functions
+      await this.stepFunctions.sendTaskSuccess(body.taskToken, {
         success: true,
+        messageId: body.messageId,
         summary: result.summary,
         filesChanged: result.filesChanged,
-        previewUrl: result.siteUrl,
+        siteUrl: result.siteUrl,
         buildSuccess: result.buildSuccess,
         deploySuccess: result.deploySuccess,
-      };
-      await this.sendResponse(successResponse);
+      });
+
+      this.logger.log('Successfully processed message and sent callback');
+
     } catch (error: any) {
-      if (error.message === 'InterruptError') {
-        // Send interrupt notification
-        const interruptResponse: ResponseMessage = {
-          type: 'response',
-          sessionId: body.sessionId,
-          projectId: body.projectId,
-          userId: body.userId,
-          commandId: body.commandId || '',
-          timestamp: new Date().toISOString(),
-          success: false,
-          summary: 'Process interrupted by new message',
-          interrupted: true,
-        };
-        await this.sendResponse(interruptResponse);
-      } else {
-        // Send error response
-        const errorResponse: ResponseMessage = {
-          type: 'response',
-          sessionId: body.sessionId,
-          projectId: body.projectId,
-          userId: body.userId,
-          commandId: body.commandId || '',
-          timestamp: new Date().toISOString(),
-          success: false,
-          error: error.message,
-        };
-        await this.sendResponse(errorResponse);
-      }
+      this.logger.error(`Failed to process message: ${error.message}`);
+
+      // Send failure callback to Step Functions
+      await this.stepFunctions.sendTaskFailure(
+        body.taskToken,
+        error.name || 'ProcessingError',
+        error.message
+      );
+
     } finally {
-      this.currentProcess = null;
+      // Clean up
+      await this.activeJobs.clearJob(projectUserKey);
+      this.stepFunctions.stopHeartbeat();
+      this.visibilityExtension.stopExtension();
+      this.isProcessing = false;
+    }
+  }
+
+  /**
+   * Handle interrupt messages
+   */
+  @OnEvent('interrupt')
+  async handleInterrupt(interrupt: InterruptMessage) {
+    this.logger.warn(`Processing interrupt: ${interrupt.reason}`);
+
+    const currentJob = this.activeJobs.getCurrentJob();
+    if (!currentJob) {
+      this.logger.warn('No active job to interrupt');
+      return;
+    }
+
+    try {
+      // 1. Stop current processing
+      await this.interruptCurrentProcess();
+
+      // 2. Save partial work
+      await this.savePartialWork();
+
+      // 3. Delete FIFO message to unblock queue
+      await this.visibilityExtension.deleteCurrentMessage();
+
+      // 4. Send task failure with interruption flag
+      await this.stepFunctions.sendTaskFailure(
+        currentJob.taskToken,
+        'PREEMPTED',
+        `Interrupted by new message in thread ${interrupt.newThreadId}`
+      );
+
+      // 5. Clear active job
+      await this.activeJobs.clearJob(currentJob.projectUserKey);
+
+      this.logger.log('Interrupt handling complete, FIFO queue unblocked');
+
+    } catch (error: any) {
+      this.logger.error(`Failed to handle interrupt: ${error.message}`);
+    } finally {
+      this.isProcessing = false;
     }
   }
 
   @SqsConsumerEventHandler('container-input', 'error')
   async onError(error: Error, message: Message) {
     this.logger.error(`Error processing message: ${error.message}`, error.stack);
-    // Message will be retried or sent to DLQ based on queue configuration
   }
 
-  @SqsConsumerEventHandler('container-input', 'processing_error')
-  async onProcessingError(error: Error, message: Message) {
-    this.logger.error(`Processing error: ${error.message}`, error.stack);
-  }
-
+  /**
+   * Interrupt current process gracefully
+   */
   private async interruptCurrentProcess(): Promise<void> {
     if (this.currentProcess) {
       const processName = this.currentProcess.spawnfile;
@@ -156,47 +204,52 @@ export class MessageProcessor {
         });
       });
 
-      // Auto-commit any changes with meaningful message
-      const commitContext = {
-        interrupted: true,
-        sessionId: this.currentSessionId,
-        filesChanged: [],  // We don't have file list at interrupt time
-      };
-      const commitMessage = this.commitMessageService.generateCommitMessage(commitContext);
-      await this.gitService.commitWithBody(commitMessage);
-
-      // If we interrupted a build, try to sync whatever was built
-      if (processName === 'npm') {
-        this.logger.log('Build was interrupted, attempting S3 sync of partial build...');
-        const claim = this.queueManager.getCurrentClaim();
-        const clientId = claim?.projectId || 'ameliastamps';
-        await this.syncToS3WithInterrupt(clientId).catch(err =>
-          this.logger.warn(`Failed to sync partial build: ${err.message}`)
-        );
-      }
-
-      // If we interrupted S3 sync, partial files may have been uploaded
-      if (processName === 'aws') {
-        this.logger.log('S3 sync was interrupted, partial deployment may be available');
-      }
-
-      // Push any committed changes with conflict handling
-      if (process.env.GIT_PUSH_ENABLED !== 'false') {
-        await this.gitService.safePush();
-      }
-
       this.currentProcess = null;
     }
   }
 
-  private async switchToSession(sessionId: string, chatThreadId: string): Promise<void> {
-    // chatThreadId may already have 'thread-' prefix from Hermes
-    const branch = chatThreadId.startsWith('thread-') ? chatThreadId : `thread-${chatThreadId}`;
+  /**
+   * Save any partial work before interruption
+   */
+  private async savePartialWork(): Promise<void> {
+    try {
+      // Commit any uncommitted changes
+      const commitContext = {
+        interrupted: true,
+        sessionId: this.currentSessionId,
+        filesChanged: [],
+      };
+      const commitMessage = this.commitMessageService.generateCommitMessage(commitContext);
+      await this.gitService.commitWithBody(commitMessage);
+
+      // Push to GitHub
+      if (process.env.GIT_PUSH_ENABLED !== 'false') {
+        await this.gitService.safePush();
+      }
+
+      // If build was interrupted, sync partial build
+      const currentJob = this.activeJobs.getCurrentJob();
+      if (currentJob && this.currentProcess?.spawnfile === 'npm') {
+        this.logger.log('Syncing partial build to S3...');
+        await this.syncToS3WithInterrupt(currentJob.projectUserKey.split('#')[0]).catch(err =>
+          this.logger.warn(`Failed to sync partial build: ${err.message}`)
+        );
+      }
+    } catch (error: any) {
+      this.logger.error(`Failed to save partial work: ${error.message}`);
+    }
+  }
+
+  /**
+   * Switch to the correct git branch for the thread
+   */
+  private async switchToThread(threadId: string): Promise<void> {
+    const branch = threadId.startsWith('thread-') ? threadId : `thread-${threadId}`;
 
     // Commit current changes if any
     if (this.currentSessionId) {
       const commitContext = {
-        instruction: 'Switching sessions',
+        instruction: 'Switching threads',
         sessionId: this.currentSessionId,
         filesChanged: [],
       };
@@ -204,104 +257,28 @@ export class MessageProcessor {
       await this.gitService.commitWithBody(commitMessage);
     }
 
-    // Use safe branch switch with stash support
+    // Switch branch
     const switchSuccess = await this.gitService.safeBranchSwitch(branch);
-
     if (!switchSuccess) {
-      // Fall back to recovery and force checkout
       this.logger.warn('Safe switch failed, attempting recovery...');
-      try {
-        await this.gitService.recoverRepository();
-        // Try again after recovery
-        await this.gitService.checkoutBranch(branch);
-      } catch {
-        // Create branch if it doesn't exist
-        await this.gitService.createBranch(branch);
-      }
-    }
-
-    this.currentSessionId = sessionId;
-    this.logger.log(`Switched to session ${sessionId} (branch: ${branch})`);
-  }
-
-  private async executeClaudeCode(message: any): Promise<any> {
-    try {
-      this.logger.log('Executing instruction with ClaudeExecutorService');
-
-      // Get the project workspace path for Claude to work in
-      const projectPath = this.getProjectPath();
-
-      // Add project path to context
-      const contextWithPath = {
-        ...message.context,
-        projectPath
-      };
-
-      // Use the ClaudeExecutorService to process the instruction
-      const result = await this.claudeExecutor.execute(
-        message.instruction,
-        contextWithPath
-      );
-
-      // Ensure result has the expected structure
-      return {
-        output: result.output || result.summary || 'Instruction processed',
-        filesChanged: result.filesChanged || [],
-        summary: result.summary || result.output,
-        success: result.success !== false,
-      };
-    } catch (error: any) {
-      // Check if it was an interruption
-      if (error.message === 'Process interrupted') {
-        throw new Error('InterruptError');
-      }
-
-      this.logger.error(`Failed to execute Claude Code: ${error.message}`);
-      throw error;
-    }
-  }
-
-  private async sendResponse(response: ResponseMessage): Promise<void> {
-    // Use QueueManagerService if available, otherwise fallback to static queue
-    const queueManager = (this as any).queueManager;
-    if (queueManager) {
-      await queueManager.sendResponse(response);
-    } else if (process.env.OUTPUT_QUEUE_URL) {
-      // Fallback to static queue if configured
-      await this.sqsService.send('container-output', {
-        id: response.commandId,
-        body: response,
+      await this.gitService.recoverRepository();
+      await this.gitService.checkoutBranch(branch).catch(() => {
+        return this.gitService.createBranch(branch);
       });
-    } else {
-      this.logger.warn('No output queue available for response');
     }
+
+    this.currentSessionId = threadId;
+    this.logger.log(`Switched to thread ${threadId} (branch: ${branch})`);
   }
 
   /**
-   * Extract a meaningful commit message from the message body
-   * @deprecated Use commitMessageService.generateCommitMessage instead
+   * Execute the complete workflow
    */
-  private extractCommitMessage(message: any): string {
-    // Use instruction or command as commit message
-    const instruction = message.instruction || message.command || 'Claude changes';
-    const sessionId = message.sessionId?.substring(0, 8) || 'unknown';
-
-    // Truncate long instructions to fit in commit message
-    const truncatedInstruction = instruction.length > 100
-      ? instruction.substring(0, 97) + '...'
-      : instruction;
-
-    return `[${sessionId}] ${truncatedInstruction}`;
-  }
-
-  /**
-   * Execute the complete workflow: Claude -> Commit -> Build -> Deploy -> Push
-   */
-  private async executeCompleteWorkflow(message: any): Promise<any> {
+  private async executeCompleteWorkflow(message: StepFunctionMessage): Promise<any> {
     const result: any = {
       filesChanged: [],
       summary: '',
-      siteUrl: this.s3SyncService.getDeployedUrl(message.clientId),
+      siteUrl: this.s3SyncService.getDeployedUrl(message.projectId),
       buildSuccess: false,
       deploySuccess: false,
     };
@@ -313,79 +290,87 @@ export class MessageProcessor {
       result.filesChanged = claudeResult.filesChanged || [];
       result.summary = claudeResult.output || '';
 
-      // Step 2: Commit changes (don't push yet)
+      // Step 2: Commit changes
       if (result.filesChanged.length > 0) {
         this.logger.log('Step 2/5: Committing changes...');
-
-        // Generate meaningful commit message
         const commitContext = {
           instruction: message.instruction,
-          command: message.command,
           filesChanged: result.filesChanged,
-          sessionId: message.sessionId,
+          sessionId: message.threadId,
           userId: message.userId,
           timestamp: Date.now(),
         };
-
         const commitMessage = this.commitMessageService.generateCommitMessage(commitContext);
         const commitBody = this.commitMessageService.generateCommitBody(commitContext);
-
-        // Use new commit method with body support
         await this.gitService.commitWithBody(commitMessage, commitBody);
-      } else {
-        this.logger.log('Step 2/5: No files changed, skipping commit');
       }
 
-      // Step 3: Build Astro project
+      // Step 3: Build
       this.logger.log('Step 3/5: Building Astro site...');
       result.buildSuccess = await this.buildAstroWithInterrupt();
 
       if (result.buildSuccess) {
-        // Step 4: Sync to S3
+        // Step 4: Deploy to S3
         this.logger.log('Step 4/5: Deploying to S3...');
-        result.deploySuccess = await this.syncToS3WithInterrupt(message.projectId || message.clientId);
+        result.deploySuccess = await this.syncToS3WithInterrupt(message.projectId);
 
-        // Step 5: Push commits to GitHub with conflict handling
+        // Step 5: Push to GitHub
         if (process.env.GIT_PUSH_ENABLED !== 'false') {
           this.logger.log('Step 5/5: Pushing to GitHub...');
-          const pushSuccess = await this.gitService.safePush();
-          if (!pushSuccess) {
-            this.logger.warn('Failed to push to GitHub after conflict resolution, but continuing');
-            // Could queue for later retry or notify user
-          } else {
-            this.logger.log('Successfully pushed changes to GitHub');
-          }
-        } else {
-          this.logger.log('Step 5/5: Git push disabled, skipping');
-        }
-      } else {
-        this.logger.warn('Build failed, skipping deployment');
-        // Still try to push commits even if build failed
-        if (process.env.GIT_PUSH_ENABLED !== 'false') {
-          this.logger.log('Attempting to push commits despite build failure...');
           await this.gitService.safePush();
         }
       }
 
       return result;
     } catch (error: any) {
-      this.logger.error(`Workflow failed at step: ${error.message}`);
-
-      // Try to push whatever we have committed
-      if (process.env.GIT_PUSH_ENABLED !== 'false') {
-        this.logger.log('Attempting to push any committed changes...');
-        await this.gitService.safePush();
-      }
-
+      this.logger.error(`Workflow failed: ${error.message}`);
       throw error;
     }
   }
 
   /**
-   * Build Astro project with interrupt support
+   * Execute Claude Code with the instruction
+   */
+  private async executeClaudeCode(message: StepFunctionMessage): Promise<any> {
+    try {
+      const projectPath = this.getProjectPath(message.projectId, message.userId);
+      
+      const contextWithPath = {
+        ...message,
+        projectPath,
+        attachments: message.attachments || [],
+      };
+
+      const result = await this.claudeExecutor.execute(
+        message.instruction,
+        contextWithPath
+      );
+
+      return {
+        output: result.output || result.summary || 'Instruction processed',
+        filesChanged: result.filesChanged || [],
+        summary: result.summary || result.output,
+        success: result.success !== false,
+      };
+    } catch (error: any) {
+      if (error.message === 'Process interrupted') {
+        throw new Error('InterruptError');
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Build Astro with interruption support
    */
   private async buildAstroWithInterrupt(): Promise<boolean> {
-    const projectPath = this.getProjectPath();
+    const currentJob = this.activeJobs.getCurrentJob();
+    if (!currentJob) return false;
+
+    const projectPath = this.getProjectPath(
+      currentJob.projectUserKey.split('#')[0],
+      currentJob.projectUserKey.split('#')[1]
+    );
 
     return new Promise((resolve, reject) => {
       const buildProcess = spawn('npm', ['run', 'build'], {
@@ -393,20 +378,16 @@ export class MessageProcessor {
         env: { ...process.env, NODE_ENV: 'production' }
       });
 
-      // Track for interruption
       this.currentProcess = buildProcess;
 
-      let buildOutput = '';
       let errorOutput = '';
 
       buildProcess.stdout?.on('data', (data) => {
-        buildOutput += data.toString();
         this.logger.debug(`Build: ${data.toString().trim()}`);
       });
 
       buildProcess.stderr?.on('data', (data) => {
         errorOutput += data.toString();
-        // Don't log warnings as errors
         if (!data.toString().includes('warning')) {
           this.logger.debug(`Build stderr: ${data.toString().trim()}`);
         }
@@ -419,11 +400,11 @@ export class MessageProcessor {
           this.logger.log('✅ Astro build successful');
           resolve(true);
         } else if (code === 130) { // SIGINT
-          this.logger.warn('Build interrupted by new message');
+          this.logger.warn('Build interrupted');
           reject(new Error('InterruptError'));
         } else {
           this.logger.error(`Build failed with code ${code}: ${errorOutput}`);
-          resolve(false); // Don't fail workflow on build error
+          resolve(false);
         }
       });
 
@@ -436,12 +417,16 @@ export class MessageProcessor {
   }
 
   /**
-   * Sync to S3 with interrupt support
+   * Sync to S3 with interruption support
    */
-  private async syncToS3WithInterrupt(clientId: string): Promise<boolean> {
-    const projectPath = this.getProjectPath();
+  private async syncToS3WithInterrupt(projectId: string): Promise<boolean> {
+    const currentJob = this.activeJobs.getCurrentJob();
+    if (!currentJob) return false;
+
+    const [project, user] = currentJob.projectUserKey.split('#');
+    const projectPath = this.getProjectPath(project, user);
     const distPath = `${projectPath}/dist`;
-    const bucket = `edit.${clientId || 'amelia'}.webordinary.com`;
+    const bucket = `edit.${projectId}.webordinary.com`;
 
     // Check if dist folder exists
     try {
@@ -452,9 +437,6 @@ export class MessageProcessor {
     }
 
     return new Promise((resolve) => {
-      const syncCommand = `aws s3 sync ${distPath} s3://${bucket} --delete --region us-west-2`;
-      this.logger.debug(`S3 sync command: ${syncCommand}`);
-
       const syncProcess = spawn('aws', [
         's3', 'sync', distPath, `s3://${bucket}`,
         '--delete', '--region', 'us-west-2'
@@ -462,7 +444,6 @@ export class MessageProcessor {
         env: { ...process.env }
       });
 
-      // Track for interruption
       this.currentProcess = syncProcess;
 
       let syncOutput = '';
@@ -470,7 +451,6 @@ export class MessageProcessor {
 
       syncProcess.stdout?.on('data', (data) => {
         syncOutput += data.toString();
-        // Count files being uploaded
         const uploads = (data.toString().match(/upload:/g) || []).length;
         if (uploads > 0) {
           this.logger.debug(`Uploading ${uploads} files...`);
@@ -488,21 +468,14 @@ export class MessageProcessor {
         this.currentProcess = null;
 
         if (code === 0) {
-          // Count total uploads/deletes
           const uploadCount = (syncOutput.match(/upload:/g) || []).length;
           const deleteCount = (syncOutput.match(/delete:/g) || []).length;
-
-          if (uploadCount > 0 || deleteCount > 0) {
-            this.logger.log(`✅ S3 sync complete: ${uploadCount} uploaded, ${deleteCount} deleted`);
-          } else {
-            this.logger.log('✅ S3 sync complete: no changes');
-          }
-
+          this.logger.log(`✅ S3 sync complete: ${uploadCount} uploaded, ${deleteCount} deleted`);
           this.logger.log(`🌐 Site updated at https://${bucket}`);
           resolve(true);
-        } else if (code === 130) { // SIGINT
-          this.logger.warn('S3 sync interrupted by new message');
-          resolve(false); // Partial sync, don't fail
+        } else if (code === 130) {
+          this.logger.warn('S3 sync interrupted');
+          resolve(false);
         } else {
           this.logger.error(`S3 sync failed with code ${code}: ${errorOutput}`);
           resolve(false);
@@ -518,19 +491,10 @@ export class MessageProcessor {
   }
 
   /**
-   * Get the project path for the current client/user
-   * This returns the full path including the repository name
+   * Get project path
    */
-  private getProjectPath(): string {
-    const claim = this.queueManager.getCurrentClaim();
-    if (!claim) {
-      // Fallback for legacy tests or initialization
-      return `${this.workspacePath}/unclaimed/workspace`;
-    }
-    const { projectId, userId } = claim;
-    // Include the repo name for Astro builds and S3 sync
+  private getProjectPath(projectId: string, userId: string): string {
     // TODO: Make repo name configurable per project
     return `${this.workspacePath}/${projectId}/${userId}/amelia-astro`;
   }
-
 }
