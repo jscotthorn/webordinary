@@ -18,7 +18,8 @@ import { InterruptMessage } from './interrupt-handler.service';
 interface StepFunctionMessage {
   taskToken: string;
   messageId: string;
-  instruction: string;
+  instruction?: string;  // Legacy field
+  text?: string;         // New field from Step Functions
   threadId: string;
   attachments?: any[];
   projectId: string;
@@ -294,7 +295,7 @@ export class MessageProcessor implements OnModuleDestroy {
       if (result.filesChanged.length > 0) {
         this.logger.log('Step 2/5: Committing changes...');
         const commitContext = {
-          instruction: message.instruction,
+          instruction: message.text || message.instruction,
           filesChanged: result.filesChanged,
           sessionId: message.threadId,
           userId: message.userId,
@@ -342,7 +343,7 @@ export class MessageProcessor implements OnModuleDestroy {
       };
 
       const result = await this.claudeExecutor.execute(
-        message.instruction,
+        message.text || message.instruction,
         contextWithPath
       );
 

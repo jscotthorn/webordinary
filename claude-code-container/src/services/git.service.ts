@@ -64,9 +64,15 @@ export class GitService {
   async createBranch(branch: string): Promise<void> {
     const projectPath = this.getRepoPath();
     try {
+<<<<<<< Updated upstream
       // Always create new branches from master to ensure clean state
       await execAsync(`git checkout -b ${branch} origin/master`, { cwd: projectPath });
       this.logger.log(`Created and checked out new branch: ${branch} from master`);
+=======
+      // Always create new branches from main to ensure clean state
+      await execAsync(`git checkout -b ${branch} origin/main`, { cwd: projectPath });
+      this.logger.log(`Created and checked out new branch: ${branch} from main`);
+>>>>>>> Stashed changes
     } catch (error: any) {
       this.logger.error(`Failed to create branch ${branch}: ${error.message}`);
       throw error;
@@ -471,9 +477,13 @@ export class GitService {
           cwd: projectPath
         });
       } catch (checkoutError: any) {
-        // Branch doesn't exist, create it from master
+        // Branch doesn't exist, create it from main
         if (checkoutError.message.includes('did not match any')) {
+<<<<<<< Updated upstream
           await execAsync(`git checkout -b ${targetBranch} origin/master`, {
+=======
+          await execAsync(`git checkout -b ${targetBranch} origin/main`, {
+>>>>>>> Stashed changes
             cwd: projectPath
           });
         } else {

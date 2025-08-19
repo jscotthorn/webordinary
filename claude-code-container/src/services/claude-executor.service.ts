@@ -94,6 +94,21 @@ export class ClaudeExecutorService {
       process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS = process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS || '4096';
       process.env.MAX_THINKING_TOKENS = process.env.MAX_THINKING_TOKENS || '1024';
       
+<<<<<<< Updated upstream
+=======
+      // Ensure Node is in PATH for the Claude SDK spawn operations
+      // Set NODE environment variable to the current Node executable
+      process.env.NODE = process.execPath;
+      
+      // Also ensure PATH includes the Node binary directory
+      const nodeDir = require('path').dirname(process.execPath);
+      if (!process.env.PATH?.includes(nodeDir)) {
+        process.env.PATH = `${nodeDir}:${process.env.PATH || '/usr/local/bin:/usr/bin:/bin'}`;
+      }
+      
+      this.logger.log(`Node executable: ${process.execPath}`);
+      this.logger.log(`PATH configured with Node directory: ${nodeDir}`);
+>>>>>>> Stashed changes
       let output = '';
       let assistantMessages = [];
       let sessionId = '';
