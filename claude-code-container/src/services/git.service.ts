@@ -67,6 +67,7 @@ export class GitService {
 <<<<<<< Updated upstream
 <<<<<<< Updated upstream
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
       // Always create new branches from main to ensure clean state
       await execAsync(`git checkout -b ${branch} origin/main`, { cwd: projectPath });
       this.logger.log(`Created and checked out new branch: ${branch} from main`);
@@ -158,6 +159,11 @@ export class GitService {
       this.logger.log(`Created and checked out new branch: ${branch} from main`);
 >>>>>>> Stashed changes
 =======
+>>>>>>> Stashed changes
+=======
+      // Always create new branches from main to ensure clean state
+      await execAsync(`git checkout -b ${branch} origin/main`, { cwd: projectPath });
+      this.logger.log(`Created and checked out new branch: ${branch} from main`);
 >>>>>>> Stashed changes
 =======
       // Always create new branches from main to ensure clean state
@@ -602,7 +608,11 @@ export class GitService {
 <<<<<<< Updated upstream
 <<<<<<< Updated upstream
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
           await execAsync(`git checkout -b ${targetBranch} origin/master`, {
+=======
+          await execAsync(`git checkout -b ${targetBranch} origin/main`, {
+>>>>>>> Stashed changes
 =======
           await execAsync(`git checkout -b ${targetBranch} origin/main`, {
 >>>>>>> Stashed changes
