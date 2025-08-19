@@ -107,6 +107,9 @@ export class ClaudeExecutorService {
       this.logger.log(`Node executable: ${process.execPath}`);
       this.logger.log(`PATH configured with Node directory: ${nodeDir}`);
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
 =======
 >>>>>>> Stashed changes
