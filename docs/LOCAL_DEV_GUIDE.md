@@ -1,8 +1,13 @@
 # Local Development Guide
 
-## ⚠️ MAJOR UPDATE: Lambda-based Development (2025-08-17)
+## ⚠️ MAJOR UPDATE: Lambda-based Development (2025-08-19)
 
 Hermes has been replaced with Lambda functions and Step Functions. Use the new Lambda development environment for local testing.
+
+**Latest Updates:**
+- Docker-based E2E testing for claude-code-container
+- Fixed merge conflicts in container services
+- New test scripts for container validation
 
 ## Quick Start
 
@@ -197,7 +202,105 @@ aws --endpoint-url=http://localhost:4566 sqs get-queue-attributes \
   --attribute-names All
 ```
 
+## Docker-based E2E Testing (New!)
+
+### Overview
+Test the claude-code-container in a production-like Docker environment with real AWS credentials and GitHub token.
+
+### Prerequisites
+- Docker Desktop running
+- GitHub personal access token in environment: `export GITHUB_TOKEN=your_token`
+- AWS credentials configured: `~/.aws/credentials` with `personal` profile
+
+### Quick Test
+```bash
+# From project root
+cd claude-code-container
+npm run test:docker
+```
+
+### Test Commands
+```bash
+# Build Docker image only
+npm run test:docker:build
+
+# Run basic E2E test
+npm run test:docker
+
+# View container logs
+npm run test:docker:logs
+
+# Clean up containers
+npm run test:docker:clean
+```
+
+### Advanced Testing
+```bash
+# Test with SQS message
+./scripts/test-container-with-message.sh
+
+# Run specific test scenarios
+./scripts/test-container-e2e.sh test basic
+./scripts/test-container-e2e.sh test s3
+./scripts/test-container-e2e.sh test stepfunction
+```
+
+### Docker Test Configuration
+The `docker-compose.test.yml` file configures:
+- AWS credentials from host machine
+- GitHub token for repository access
+- Queue URLs and DynamoDB tables
+- Workspace volume mounting
+- Resource limits (2GB RAM, 1 CPU)
+
+### Troubleshooting Docker Tests
+```bash
+# Check if container is running
+docker ps | grep claude-e2e-test
+
+# View detailed logs
+docker logs claude-e2e-test
+
+# Check DynamoDB ownership
+AWS_PROFILE=personal aws dynamodb scan \
+  --table-name webordinary-container-ownership \
+  --limit 5
+
+# Clean up stuck containers
+docker stop claude-e2e-test && docker rm claude-e2e-test
+```
+
 ## Common Issues and Solutions
+
+### Merge Conflicts in Container Code
+If you encounter TypeScript build errors with merge conflict markers:
+```bash
+# The container code has been fixed, but if you see errors like:
+# error TS1185: Merge conflict marker encountered
+
+# Clean and rebuild
+cd claude-code-container
+npm run build
+
+# If conflicts persist, check for conflict markers
+grep -r "<<<<<<< " src/
+```
+
+### Docker Container Platform Warning
+```bash
+# If you see: "The requested image's platform (linux/amd64) does not match"
+# This is expected on Apple Silicon Macs (M1/M2/M3)
+# The container still runs correctly under emulation
+# To suppress the warning, you can build for ARM64:
+docker build --platform linux/arm64 -t webordinary/claude-code-test:latest .
+```
+
+### Missing auto-shutdown.sh Script
+```bash
+# If you see: "/app/scripts/auto-shutdown.sh: No such file or directory"
+# This is a non-critical warning that can be ignored
+# The script reference will be removed in the next update
+```
 
 ### LocalStack Won't Start
 ```bash
@@ -336,7 +439,7 @@ If you have custom scripts, update them to:
 3. Use test AWS credentials
 4. Trigger via S3 uploads instead of SQS messages
 
-## Current Status (Sprint 2 Day 4-5 Complete)
+## Current Status (Sprint 2 Day 5 Complete - 2025-08-19)
 
 ### ✅ Completed
 - Lambda functions: intake-lambda, process-attachment-lambda
@@ -345,6 +448,10 @@ If you have custom scripts, update them to:
 - Unified development scripts
 - S3 event triggers
 - Automatic stub Lambda generation
+- **Docker-based E2E testing for claude-code-container**
+- **Fixed merge conflicts in container services**
+- **Container successfully claims work from SQS queues**
+- **DynamoDB ownership tracking validated**
 
 ### 🚧 In Progress (Sprint 2 Day 6-7)
 - Support Lambda implementations (currently stubs):
@@ -353,12 +460,14 @@ If you have custom scripts, update them to:
   - record-interruption-lambda
   - handle-timeout-lambda
 - Unit tests with mocked AWS services
+- Full Step Functions integration testing
 
 ### 📅 Upcoming (Sprint 3)
 - Production CDK deployment
 - CloudWatch integration
 - Error handling and retry improvements
 - Performance optimization
+- Remove deprecated auto-shutdown.sh reference
 
 ## Support
 

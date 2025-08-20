@@ -1,0 +1,80 @@
+version: '3.8'
+
+services:
+  claude-code-test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: claude-code-e2e-test
+    environment:
+      # AWS credentials from host
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      AWS_REGION: us-west-2
+      AWS_PROFILE: ${AWS_PROFILE:-personal}
+      
+      # GitHub token from host
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      
+      # Queue configuration
+      UNCLAIMED_QUEUE_URL: ${UNCLAIMED_QUEUE_URL}
+      INPUT_QUEUE_URL: ${INPUT_QUEUE_URL}
+      OUTPUT_QUEUE_URL: ${OUTPUT_QUEUE_URL}
+      INTERRUPT_QUEUE_URL: ${INTERRUPT_QUEUE_URL}
+      
+      # Step Functions configuration
+      TASK_TOKEN: ${TASK_TOKEN:-}
+      
+      # Claude configuration
+      CLAUDE_CODE_NON_INTERACTIVE: "true"
+      ASTRO_TELEMETRY_DISABLED: "1"
+      CLAUDE_CODE_USE_BEDROCK: "1"
+      
+      # Runtime configuration
+      NODE_ENV: test
+      LOG_LEVEL: debug
+      WORKSPACE_PATH: /workspace
+      
+      # S3 configuration
+      S3_BUCKET_PREFIX: edit
+      S3_BUCKET_SUFFIX: webordinary.com
+      
+      # DynamoDB configuration (for thread mappings)
+      THREAD_MAPPINGS_TABLE: webordinary-thread-mappings
+      CONTAINERS_TABLE: webordinary-containers
+      
+    volumes:
+      # Mount workspace for file operations
+      - ./workspace:/workspace
+      # Mount AWS credentials if using profile
+      - ~/.aws:/home/appuser/.aws:ro
+      # Mount local source for development testing
+      - ./dist:/app/dist:ro
+      - ./scripts:/app/scripts:ro
+      
+    working_dir: /app
+    user: appuser
+    
+    # Override entrypoint for testing
+    entrypoint: ["/bin/bash", "-c"]
+    command: ["node dist/main.js"]
+    
+    # Resource limits for testing
+    mem_limit: 2g
+    cpus: "1.0"
+    
+    # Logging configuration
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    
+    # Network configuration
+    networks:
+      - test-network
+
+networks:
+  test-network:
+    driver: bridge
