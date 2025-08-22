@@ -57,8 +57,8 @@ if [ "$1" == "--build" ]; then
     cd - > /dev/null
     IMAGE_TAG="local"
 else
-    # Use the final-fix image by default
-    IMAGE_TAG="final-fix"
+    # Use the interrupt-test image by default
+    IMAGE_TAG="interrupt-test"
 fi
 
 # Start the container

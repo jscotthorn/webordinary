@@ -193,29 +193,128 @@ webordinary-active-jobs
 ### Media Processing Architecture
 
 #### Overview
-Email attachments are processed and stored in S3 for Claude pod access during work. The Claude pod decides what to include in the site. Astro handles final optimization during build, and only files in the dist folder are published.
+Email attachments are stored in S3 and referenced using S3 URIs in content. During build, Astro processes these references using IAM credentials, eliminating the need for presigned URLs that expire.
 
-1. **Attachment Processing**: Optimize images, keep documents as-is
-2. **Claude Access**: Pod references S3 URLs and decides what to include
-3. **Astro Build**: Pulls referenced content (images, PDFs, docs) and processes them
-4. **Publishing**: Only Astro dist/ contents go to public site (may include PDFs/docs if Claude included them)
+1. **Attachment Storage**: Lambda stores attachments in S3 media bucket
+2. **Content Authoring**: Claude references media using S3 URIs with query params
+3. **Build-Time Processing**: Remark plugin fetches from S3, processes with Sharp, generates static files
+4. **Publishing**: Only static files in dist/ are deployed (no runtime S3 access needed)
 
-#### Astro Configuration with Presigned URLs
+#### S3 URI Format in Content
+```markdown
+<!-- In MDX/Markdown files -->
+![Hero Image](s3://media-source.amelia.webordinary.com/uploads/hero.jpg?w=1200&fmt=webp&q=82)
+![Product Photo](s3://media-source.amelia.webordinary.com/products/widget.png?w=800&h=600&fmt=avif)
+
+<!-- Documents -->
+[Download Specification](s3://media-source.amelia.webordinary.com/docs/spec.pdf)
+```
+
+#### Remark Plugin for S3 Image Processing
+```javascript
+// remark-s3-images.mjs
+import { HeadObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+import sharp from 'sharp';
+import { createHash } from 'crypto';
+import { writeFileSync, mkdirSync } from 'fs';
+import { join } from 'path';
+
+export function remarkS3Images(options = {}) {
+  const { s3Client, outputDir = 'public/img', region = 'us-west-2' } = options;
+  
+  return async (tree, file) => {
+    const { visit } = await import('unist-util-visit');
+    const promises = [];
+    
+    visit(tree, 'image', (node) => {
+      if (node.url?.startsWith('s3://')) {
+        promises.push(processS3Image(node, s3Client, outputDir, region));
+      }
+    });
+    
+    await Promise.all(promises);
+  };
+}
+
+async function processS3Image(node, s3Client, outputDir, region) {
+  const url = new URL(node.url);
+  const bucket = url.hostname;
+  const key = url.pathname.slice(1);
+  const params = Object.fromEntries(url.searchParams);
+  
+  // Get object metadata for versioning
+  const headResponse = await s3Client.send(new HeadObjectCommand({ 
+    Bucket: bucket, 
+    Key: key 
+  }));
+  
+  const versionId = headResponse.VersionId || headResponse.ETag.replace(/"/g, '');
+  
+  // Generate deterministic filename
+  const hash = createHash('md5')
+    .update(`${bucket}/${key}/${versionId}/${JSON.stringify(params)}`)
+    .digest('hex')
+    .substring(0, 8);
+  
+  const ext = params.fmt || 'webp';
+  const filename = `${key.replace(/[^a-z0-9]/gi, '-')}-${hash}.${ext}`;
+  const outputPath = join(outputDir, filename);
+  
+  // Check if already processed
+  if (existsSync(outputPath)) {
+    node.url = `/img/${filename}`;
+    return;
+  }
+  
+  // Fetch from S3
+  const getResponse = await s3Client.send(new GetObjectCommand({ 
+    Bucket: bucket, 
+    Key: key 
+  }));
+  
+  const buffer = await streamToBuffer(getResponse.Body);
+  
+  // Process with Sharp
+  let sharpInstance = sharp(buffer);
+  
+  if (params.w) sharpInstance = sharpInstance.resize(parseInt(params.w), parseInt(params.h) || null);
+  if (params.fmt) sharpInstance = sharpInstance.toFormat(params.fmt, { quality: parseInt(params.q) || 85 });
+  
+  const processed = await sharpInstance.toBuffer();
+  
+  // Save to dist
+  mkdirSync(outputDir, { recursive: true });
+  writeFileSync(outputPath, processed);
+  
+  // Update node to reference local file
+  node.url = `/img/${filename}`;
+}
+```
+
+#### Astro Configuration with S3 Integration
 ```javascript
 // astro.config.mjs
+import { defineConfig } from 'astro/config';
+import { S3Client } from '@aws-sdk/client-s3';
+import { remarkS3Images } from './src/plugins/remark-s3-images.mjs';
+
+// Use container IAM role or local AWS credentials
+const s3Client = new S3Client({ 
+  region: process.env.AWS_REGION || 'us-west-2'
+});
+
 export default defineConfig({
-  // Point cache to EFS mount for persistence across builds
-  cacheDir: '/mnt/efs/workspace/amelia/.astro-cache',
-  
-  // Allow S3 presigned URLs - tightened to specific buckets only
+  markdown: {
+    remarkPlugins: [
+      [remarkS3Images, { 
+        s3Client,
+        outputDir: 'dist/img',
+        region: 'us-west-2'
+      }]
+    ]
+  },
+  // No need for remotePatterns since we process at build time
   image: {
-    remotePatterns: [{
-      protocol: 'https',
-      hostname: 'media-source.amelia.webordinary.com.s3.us-west-2.amazonaws.com',
-    }, {
-      protocol: 'https',
-      hostname: 'media-source.amelia.webordinary.com.s3.amazonaws.com',
-    }],
     service: {
       entrypoint: 'astro/assets/services/sharp',
     },
@@ -223,74 +322,149 @@ export default defineConfig({
 });
 ```
 
-#### Container Workflow
+#### Container Workflow with S3 URIs
 ```javascript
-// Container CONSUMES already-processed attachments from Lambda
-// It does NOT write to S3 media buckets - that's the Lambda's job
-async function handleProcessedAttachments(attachments) {
-  // Attachments were already processed and stored by process-attachment-lambda
-  // Container's job is to decide what to include in the Astro site
+// Container references attachments using S3 URIs that will be processed at build time
+async function handleAttachmentsWithS3URIs(attachments) {
+  // Attachments are stored in S3 by process-attachment-lambda
+  // Container references them using S3 URIs - no presigned URLs needed
   
   for (const attachment of attachments) {
-    const { filename, mimeType, avifUrl, fallbackUrl, s3Url } = attachment;
+    const { filename, mimeType, s3Bucket, s3Key, width, height } = attachment;
+    const s3Uri = `s3://${s3Bucket}/${s3Key}`;
     
     // Claude decides what to include in the site
     if (shouldIncludeInSite(filename, mimeType)) {
       if (mimeType.startsWith('image/')) {
-        // Reference the pre-processed image URLs
-        // NOTE: Validate that Astro's Image component works with presigned URLs
-        // Fallback option: Use plain <img> or pre-fetch to local during build
+        // Reference using S3 URI with transformation params
+        // Remark plugin will process these at build time
         await updateAstroContent(`
-          ---
-          import { Image } from 'astro:assets';
-          ---
+          ![${filename}](${s3Uri}?w=1200&fmt=webp&q=85)
           
-          <!-- Option 1: Astro Image component (test with real presigned URLs) -->
-          <Image 
-            src="${avifUrl}"
-            alt="${filename}"
-            width={1600}
-            height={900}
-            widths={[480, 960, 1600]}
-            sizes="(max-width: 480px) 480px, (max-width: 960px) 960px, 1600px"
-            formats={['avif', 'webp', 'jpeg']}
-          />
-          
-          <!-- Option 2 (if above fails): Plain picture element -->
-          <!--
+          <!-- For responsive images, use multiple references -->
           <picture>
-            <source srcset="${avifUrl}" type="image/avif">
-            <source srcset="${fallbackUrl}" type="${attachment.fallbackType}">
-            <img src="${fallbackUrl}" alt="${filename}" loading="lazy">
+            <source srcset="${s3Uri}?w=480&fmt=avif&q=85 480w,
+                           ${s3Uri}?w=960&fmt=avif&q=85 960w,
+                           ${s3Uri}?w=1600&fmt=avif&q=85 1600w"
+                    type="image/avif">
+            <source srcset="${s3Uri}?w=480&fmt=webp&q=85 480w,
+                           ${s3Uri}?w=960&fmt=webp&q=85 960w,
+                           ${s3Uri}?w=1600&fmt=webp&q=85 1600w"
+                    type="image/webp">
+            <img src="${s3Uri}?w=1600&fmt=jpeg&q=85" 
+                 alt="${filename}"
+                 loading="lazy"
+                 width="${width}"
+                 height="${height}">
           </picture>
-          -->
         `);
       } else {
-        // Reference document for download
+        // Reference document using S3 URI
+        // Build process will copy to dist/docs/
         await updateAstroContent(`
-          <a href="${s3Url}" download="${filename}">
-            Download ${filename}
-          </a>
+          [Download ${filename}](${s3Uri})
         `);
       }
     }
     
-    // Use documents for context (read-only access)
+    // Use documents for context (container uses IAM role to read directly from S3)
     if (['pdf', 'doc', 'docx', 'txt'].some(ext => filename.toLowerCase().endsWith(ext))) {
-      await claudeService.addContext(s3Url, mimeType);
+      // Container reads directly from S3 using IAM credentials
+      const documentContent = await s3Client.send(new GetObjectCommand({
+        Bucket: s3Bucket,
+        Key: s3Key
+      }));
+      await claudeService.addContext(documentContent.Body, mimeType);
     }
   }
 }
 ```
 
-#### Benefits of This Approach
+#### Benefits of S3 URI Approach
 
-1. **Simplified Storage**: One folder per message, no duplicate storage (originals in SES bucket)
-2. **Claude Control**: Pod decides what documents/images to include in the site
-3. **Flexible Documents**: PDFs/docs can be published or just used for context
-4. **Astro Optimization**: Final optimization happens at build time
-5. **Security**: Only explicitly referenced content ends up in dist/
-6. **Efficiency**: EFS cache prevents reprocessing unchanged content
+1. **No Expiring URLs**: S3 URIs never expire, unlike presigned URLs
+2. **Deterministic Builds**: Same input always produces same output (versioned via ETag/VersionId)
+3. **Build-Time Processing**: All transformations happen during build, no runtime S3 access
+4. **Clean Static Output**: Final site contains only optimized static files in dist/
+5. **IAM Security**: Uses container/task IAM role, no exposed credentials
+6. **Flexible Transformations**: Query params control image processing (size, format, quality)
+7. **Cache Efficiency**: Processed images are cached based on content hash + transform params
+8. **No Public Bucket Access**: Media bucket remains private, accessed only via IAM during build
+
+#### Migration from Presigned URLs
+
+For existing content with presigned URLs, the remark plugin can detect and convert them:
+
+```javascript
+// Also handle existing presigned URLs during transition
+visit(tree, 'image', (node) => {
+  // Handle S3 URIs
+  if (node.url?.startsWith('s3://')) {
+    promises.push(processS3Image(node, s3Client, outputDir));
+  }
+  // Convert presigned URLs to S3 URIs
+  else if (node.url?.includes('.s3.amazonaws.com/') || 
+           node.url?.includes('.s3.us-west-2.amazonaws.com/')) {
+    const s3Uri = convertPresignedToS3Uri(node.url);
+    node.url = s3Uri;
+    promises.push(processS3Image(node, s3Client, outputDir));
+  }
+});
+
+function convertPresignedToS3Uri(presignedUrl) {
+  const url = new URL(presignedUrl);
+  // Extract bucket and key from presigned URL
+  // https://bucket.s3.region.amazonaws.com/key -> s3://bucket/key
+  const parts = url.hostname.split('.');
+  const bucket = parts[0];
+  const key = url.pathname.slice(1).split('?')[0];
+  return `s3://${bucket}/${key}`;
+}
+```
+
+#### Implementation Requirements
+
+1. **Container IAM Permissions**:
+   - `s3:GetObject` on `media-source.*.webordinary.com/*`
+   - `s3:ListBucket` for versioning support
+   - `s3:GetObjectVersion` if versioning enabled
+
+2. **Build Dependencies**:
+   - `@aws-sdk/client-s3` for S3 access
+   - `sharp` for image processing
+   - `unist-util-visit` for AST traversal
+   - `remark` and `remark-parse` for Markdown processing
+
+3. **Caching Strategy**:
+   - Cache processed images in `/workspace/.image-cache/`
+   - Use ETag/VersionId in cache key
+   - Skip processing if output file exists with same hash
+
+4. **Error Handling**:
+   - Graceful fallback if S3 object not found
+   - Log warnings for missing images
+   - Continue build even if some images fail
+
+5. **Security Validation**:
+   - CI check to ensure no `amazonaws.com` URLs in final HTML
+   - Validate all images are served from `/img/` path
+   - Ensure no S3 credentials exposed in client-side code
+
+```bash
+# CI validation script
+#!/bin/bash
+# Check for leaked S3 URLs in built site
+if grep -r "amazonaws\.com" dist/; then
+  echo "ERROR: Found amazonaws.com URLs in built site"
+  exit 1
+fi
+
+# Ensure all images use local paths
+if grep -r "s3://" dist/; then
+  echo "ERROR: Found unprocessed S3 URIs in built site"
+  exit 1
+fi
+```
 
 #### Publishing Workflow
 ```javascript
@@ -302,10 +476,10 @@ async function deployBuiltSite(projectId) {
   const distPath = `/mnt/efs/workspace/${projectId}/dist`;
   
   // Astro has:
-  // 1. Downloaded only referenced images from S3 presigned URLs
-  // 2. Optimized them into needed sizes/formats
-  // 3. Included them in dist/_astro/
-  // 4. Generated HTML with proper paths
+  // 1. Processed S3 URIs using the remark plugin with IAM credentials
+  // 2. Optimized images into needed sizes/formats  
+  // 3. Saved processed images to dist/img/
+  // 4. Generated HTML with local paths (/img/...)
   
   // The container syncs dist/ to the edit site bucket
   // This is the ONLY S3 write the container performs
@@ -491,7 +665,7 @@ export class LambdaStack extends cdk.Stack {
       environment: {
         NODE_OPTIONS: '--max-old-space-size=896',
         MAP_MAX_CONCURRENCY: process.env.MAP_MAX_CONCURRENCY || '8',
-        PRESIGNED_URL_TTL_HOURS: process.env.PRESIGNED_URL_TTL_HOURS || '72', // Default 72h for build retries
+        // No longer need TTL since we're using S3 URIs instead of presigned URLs
       },
     });
 
@@ -1218,25 +1392,15 @@ export const handler = async (event) => {
       ContentType: 'application/json',
     });
     
-    // Generate presigned URLs for private access
-    const ttlSeconds = parseInt(process.env.PRESIGNED_URL_TTL_HOURS || '72') * 3600;
-    const presignedAvif = await s3.getSignedUrlPromise('getObject', {
-      Bucket: mediaBucket,
-      Key: avifKey,
-      Expires: ttlSeconds,
-    });
-    
-    const presignedFallback = await s3.getSignedUrlPromise('getObject', {
-      Bucket: mediaBucket,
-      Key: fallbackKey,
-      Expires: ttlSeconds,
-    });
-    
+    // Return S3 location info (no presigned URLs needed)
     return {
       filename,
       sha256,  // Include SHA256 for deduplication tracking
-      avifUrl: presignedAvif,
-      fallbackUrl: presignedFallback,
+      s3Bucket: mediaBucket,
+      s3Key: avifKey,  // Primary optimized version
+      s3FallbackKey: fallbackKey,  // Fallback format
+      width: metadata.width,
+      height: metadata.height,
       fallbackType: fallbackType,
       mimeType: 'image/avif',
       isContext: false,  // Images are for display, not context
@@ -1258,16 +1422,12 @@ export const handler = async (event) => {
     },
   });
   
-  // Return presigned URL
-  const ttlSeconds = parseInt(process.env.PRESIGNED_URL_TTL_HOURS || '72') * 3600;
+  // Return S3 location info (no presigned URLs needed)
   return {
     filename,
     sha256,  // Include SHA256 for consistency
-    s3Url: await s3.getSignedUrlPromise('getObject', {
-      Bucket: mediaBucket,
-      Key: key,
-      Expires: ttlSeconds,
-    }),
+    s3Bucket: mediaBucket,
+    s3Key: key,
     mimeType,
     isContext: true,  // Documents are for context
   };
@@ -1731,9 +1891,11 @@ interface InterruptMessage {
 interface ProcessedAttachment {
   filename: string;
   sha256: string;      // Content hash for deduplication
-  s3Url?: string;      // Presigned URL for documents
-  avifUrl?: string;    // For optimized images (AVIF)
-  fallbackUrl?: string;  // For images: JPEG (no alpha) or PNG (with alpha)
+  s3Bucket: string;   // S3 bucket name
+  s3Key: string;      // S3 object key
+  s3FallbackKey?: string; // For images: fallback format key
+  width?: number;     // Image width (for images)
+  height?: number;    // Image height (for images)
   fallbackType?: string; // 'image/jpeg' or 'image/png'
   mimeType: string;
 }
@@ -2115,9 +2277,11 @@ interface WorkerMessage {
 interface ProcessedAttachment {
   filename: string;
   sha256: string;      // Content hash for deduplication
-  s3Url?: string;      // Presigned URL for documents
-  avifUrl?: string;    // For optimized images (AVIF)
-  fallbackUrl?: string;  // For images: JPEG (no alpha) or PNG (with alpha)
+  s3Bucket: string;   // S3 bucket name
+  s3Key: string;      // S3 object key
+  s3FallbackKey?: string; // For images: fallback format key
+  width?: number;     // Image width (for images)
+  height?: number;    // Image height (for images)
   fallbackType?: string; // 'image/jpeg' or 'image/png'
   mimeType: string;
 }
@@ -2330,9 +2494,10 @@ aws sqs set-queue-attributes \
 - [ ] Test interrupt flow with multiple rapid emails
 
 #### Day 16: Media Handling
-- [ ] Update attachment handling to use presigned URLs
+- [ ] Implement remark plugin for S3 URI processing
+- [ ] Update container to use S3 URIs instead of presigned URLs
 - [ ] Ensure no amazonaws.com URLs in final HTML
-- [ ] Add CI check for presigned URL leakage
+- [ ] Add CI check for S3 URI and amazonaws.com leakage
 - [ ] Test with various attachment types (images, PDFs, docs)
 
 ### Sprint 5: Testing & Polish (3-4 days)
@@ -2382,7 +2547,7 @@ aws sqs set-queue-attributes \
 - [ ] All emails process through Step Functions
 - [ ] Interrupts successfully preempt older work
 - [ ] Attachments optimize and store correctly
-- [ ] No presigned URLs in published HTML
+- [ ] No S3 URIs or amazonaws.com URLs in published HTML
 - [ ] Clean CloudWatch logs with correlation IDs
 - [ ] Total AWS cost reduced by ~$30/month
 - [ ] Documentation accurate and up-to-date
@@ -2492,7 +2657,7 @@ new GraphWidget({
 ### Security
 - S3 Block Public Access on all buckets
 - CloudFront OAC for site buckets (edit.amelia.*, amelia.*)
-- Media buckets remain private (presigned URLs only during build)
+- Media buckets remain private (accessed via IAM during build only)
 - KMS encryption for sensitive data
 - IAM least privilege per Lambda
 - VPC endpoints for S3/DynamoDB access
