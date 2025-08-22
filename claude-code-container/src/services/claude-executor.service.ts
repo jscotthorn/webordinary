@@ -1,11 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { exec } from 'child_process';
+import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
 import * as path from 'path';
 import * as fs from 'fs/promises';
-import { query } from '@anthropic-ai/claude-code';
 
 const execAsync = promisify(exec);
+
+// Import the Claude Code SDK
+import { query } from '@anthropic-ai/claude-code';
 
 @Injectable()
 export class ClaudeExecutorService {
@@ -98,11 +100,16 @@ export class ClaudeExecutorService {
       // Set NODE environment variable to the current Node executable
       process.env.NODE = process.execPath;
       
-      // Also ensure PATH includes the Node binary directory
+      // Ensure PATH includes all possible node locations
       const nodeDir = require('path').dirname(process.execPath);
-      if (!process.env.PATH?.includes(nodeDir)) {
-        process.env.PATH = `${nodeDir}:${process.env.PATH || '/usr/local/bin:/usr/bin:/bin'}`;
-      }
+      const pathDirs = [
+        nodeDir,
+        '/usr/local/bin',
+        '/usr/bin',
+        '/bin',
+        '/usr/local/share/npm-global/bin'
+      ];
+      process.env.PATH = pathDirs.join(':');
       
       this.logger.log(`Node executable: ${process.execPath}`);
       this.logger.log(`PATH configured with Node directory: ${nodeDir}`);
@@ -173,6 +180,69 @@ export class ClaudeExecutorService {
       };
     } catch (error: any) {
       this.logger.error(`Claude Code SDK execution failed: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Execute Claude via CLI as fallback
+   */
+  private async executeViaCLI(instruction: string, projectPath: string): Promise<any> {
+    try {
+      this.logger.log(`Executing Claude via CLI in ${projectPath}...`);
+      
+      // Ensure the project path exists
+      const fsSync = require('fs');
+      if (!fsSync.existsSync(projectPath)) {
+        this.logger.warn(`Project path does not exist: ${projectPath}, using /workspace`);
+        projectPath = '/workspace';
+      }
+      
+      // Write instruction to a temp file to avoid escaping issues
+      const tempFile = `/tmp/claude-instruction-${Date.now()}.txt`;
+      await fs.writeFile(tempFile, instruction);
+      
+      // Set environment for Bedrock
+      const env = {
+        ...process.env,
+        CLAUDE_CODE_USE_BEDROCK: '1',
+        AWS_REGION: process.env.AWS_REGION || 'us-west-2',
+        CLAUDE_CODE_NON_INTERACTIVE: 'true',
+      };
+      
+      // Execute Claude CLI without shell redirection
+      const claudePath = '/usr/local/share/npm-global/bin/claude';
+      const instructionContent = await fs.readFile(tempFile, 'utf-8');
+      
+      // Use echo to pipe content to avoid shell issues
+      const { stdout, stderr } = await execAsync(
+        `echo "${instructionContent.replace(/"/g, '\\"')}" | ${claudePath} --model sonnet --max-turns 3`,
+        {
+          cwd: projectPath,
+          env,
+          maxBuffer: 10 * 1024 * 1024, // 10MB buffer
+          shell: '/bin/bash', // Explicitly use bash
+        }
+      );
+      
+      // Clean up temp file
+      await fs.unlink(tempFile).catch(() => {});
+      
+      if (stderr && stderr.includes('error')) {
+        throw new Error(`Claude CLI error: ${stderr}`);
+      }
+      
+      // Detect file changes
+      const filesChanged = await this.detectFileChanges(projectPath, {});
+      
+      return {
+        success: true,
+        output: stdout || 'Task completed',
+        summary: 'Task completed via CLI',
+        filesChanged,
+      };
+    } catch (error: any) {
+      this.logger.error(`CLI execution failed: ${error.message}`);
       throw error;
     }
   }

@@ -37,6 +37,16 @@ export interface StepFunctionMessage {
   userId: string;
   
   /**
+   * Repository URL to clone/initialize
+   */
+  repoUrl?: string;
+  
+  /**
+   * Branch to work on (defaults to threadId if not specified)
+   */
+  branch?: string;
+  
+  /**
    * Attachments if any
    */
   attachments?: any[];

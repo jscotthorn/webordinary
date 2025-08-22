@@ -20,10 +20,13 @@ interface StepFunctionMessage {
   messageId: string;
   instruction?: string;  // Legacy field
   text?: string;         // New field from Step Functions
+  content?: string;      // Alternative field name
   threadId: string;
   attachments?: any[];
   projectId: string;
   userId: string;
+  repoUrl?: string;
+  branch?: string;
 }
 
 @Injectable()
@@ -100,8 +103,18 @@ export class MessageProcessor implements OnModuleDestroy {
       // Set S3 sync context for this project/user
       this.s3SyncService.setContext(body.projectId, body.userId);
 
+      // Set environment variables for git service BEFORE initializing repository
+      process.env.PROJECT_ID = body.projectId;
+      process.env.USER_ID = body.userId;
+
+      // Initialize repository if URL provided
+      if (body.repoUrl) {
+        this.logger.log(`Initializing repository from: ${body.repoUrl}`);
+        await this.gitService.initRepository(body.repoUrl);
+      }
+
       // Switch to the correct git branch
-      await this.switchToThread(body.threadId);
+      await this.switchToThread(body.threadId, body.branch);
 
       // Process the message
       const result = await this.executeCompleteWorkflow(body);
@@ -244,8 +257,8 @@ export class MessageProcessor implements OnModuleDestroy {
   /**
    * Switch to the correct git branch for the thread
    */
-  private async switchToThread(threadId: string): Promise<void> {
-    const branch = threadId.startsWith('thread-') ? threadId : `thread-${threadId}`;
+  private async switchToThread(threadId: string, branchOverride?: string): Promise<void> {
+    const branch = branchOverride || (threadId.startsWith('thread-') ? threadId : `thread-${threadId}`);
 
     // Commit current changes if any
     if (this.currentSessionId) {
@@ -343,7 +356,7 @@ export class MessageProcessor implements OnModuleDestroy {
       };
 
       const result = await this.claudeExecutor.execute(
-        message.text || message.instruction,
+        message.text || message.instruction || message.content || 'Process the current state',
         contextWithPath
       );
 
@@ -495,7 +508,11 @@ export class MessageProcessor implements OnModuleDestroy {
    * Get project path
    */
   private getProjectPath(projectId: string, userId: string): string {
-    // TODO: Make repo name configurable per project
+    // Environment variables are now set earlier in handleMessage
+    // before initRepository is called
+    
+    // Return the same path structure that git service uses
+    // This should match git.service.ts getRepoPath() logic
     return `${this.workspacePath}/${projectId}/${userId}/amelia-astro`;
   }
 }

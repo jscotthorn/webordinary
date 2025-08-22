@@ -1,7 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { exec } from 'child_process';
+import { exec, ExecOptions } from 'child_process';
 import { promisify } from 'util';
+import * as fs from 'fs';
 
+// Create execAsync - Node will use /bin/sh by default
 const execAsync = promisify(exec);
 
 @Injectable()
@@ -53,6 +55,13 @@ export class GitService {
   async checkoutBranch(branch: string): Promise<void> {
     const projectPath = this.getRepoPath();
     try {
+      // Check if directory exists first
+      const fs = require('fs');
+      if (!fs.existsSync(projectPath)) {
+        this.logger.warn(`Cannot checkout branch - directory does not exist: ${projectPath}`);
+        throw new Error(`Repository not initialized at ${projectPath}`);
+      }
+      
       await execAsync(`git checkout ${branch}`, { cwd: projectPath });
       this.logger.log(`Checked out branch: ${branch}`);
     } catch (error: any) {
@@ -64,8 +73,30 @@ export class GitService {
   async createBranch(branch: string): Promise<void> {
     const projectPath = this.getRepoPath();
     try {
-      // Always create new branches from main to ensure clean state
-      await execAsync(`git checkout -b ${branch} origin/main`, { cwd: projectPath });
+      // Check if directory exists first
+      const fs = require('fs');
+      if (!fs.existsSync(projectPath)) {
+        this.logger.warn(`Cannot create branch - directory does not exist: ${projectPath}`);
+        throw new Error(`Repository not initialized at ${projectPath}`);
+      }
+      
+      // Get the default branch (main or master)
+      let defaultBranch = 'main';
+      try {
+        const { stdout } = await execAsync('git symbolic-ref refs/remotes/origin/HEAD', { cwd: projectPath });
+        defaultBranch = stdout.trim().split('/').pop() || 'main';
+      } catch {
+        // Fallback to checking if master exists
+        try {
+          await execAsync('git rev-parse --verify origin/master', { cwd: projectPath });
+          defaultBranch = 'master';
+        } catch {
+          defaultBranch = 'main';
+        }
+      }
+      
+      // Create new branches from the default branch to ensure clean state
+      await execAsync(`git checkout -b ${branch} origin/${defaultBranch}`, { cwd: projectPath });
       this.logger.log(`Created and checked out new branch: ${branch} from main`);
     } catch (error: any) {
       this.logger.error(`Failed to create branch ${branch}: ${error.message}`);
@@ -118,6 +149,13 @@ export class GitService {
   async commitWithBody(subject: string, body?: string): Promise<void> {
     const projectPath = this.getRepoPath();
     try {
+      // Check if directory exists first
+      const fs = require('fs');
+      if (!fs.existsSync(projectPath)) {
+        this.logger.warn(`Cannot commit - directory does not exist: ${projectPath}`);
+        return;
+      }
+      
       // Check if there are changes to commit
       const { stdout: status } = await execAsync('git status --porcelain', { 
         cwd: projectPath 
@@ -410,6 +448,14 @@ export class GitService {
   async hasUncommittedChanges(workspacePath?: string): Promise<boolean> {
     try {
       const cwd = workspacePath || this.getRepoPath();
+      
+      // Check if directory exists first
+      const fs = require('fs');
+      if (!fs.existsSync(cwd)) {
+        this.logger.debug(`Directory does not exist: ${cwd}`);
+        return false;
+      }
+      
       const { stdout } = await execAsync('git status --porcelain', { cwd });
       return stdout.trim().length > 0;
     } catch (error: any) {
@@ -452,6 +498,13 @@ export class GitService {
   async safeBranchSwitch(targetBranch: string): Promise<boolean> {
     const projectPath = this.getRepoPath();
     try {
+      // Check if directory exists first
+      const fs = require('fs');
+      if (!fs.existsSync(projectPath)) {
+        this.logger.debug(`Cannot switch branch - directory does not exist: ${projectPath}`);
+        return false;
+      }
+      
       // Check for uncommitted changes
       const hasChanges = await this.hasUncommittedChanges();
       
@@ -471,9 +524,23 @@ export class GitService {
           cwd: projectPath
         });
       } catch (checkoutError: any) {
-        // Branch doesn't exist, create it from main
+        // Branch doesn't exist, create it from default branch
         if (checkoutError.message.includes('did not match any')) {
-          await execAsync(`git checkout -b ${targetBranch} origin/main`, {
+          // Get the default branch (main or master)
+          let defaultBranch = 'main';
+          try {
+            const { stdout } = await execAsync('git symbolic-ref refs/remotes/origin/HEAD', { cwd: projectPath });
+            defaultBranch = stdout.trim().split('/').pop() || 'main';
+          } catch {
+            try {
+              await execAsync('git rev-parse --verify origin/master', { cwd: projectPath });
+              defaultBranch = 'master';
+            } catch {
+              defaultBranch = 'main';
+            }
+          }
+          
+          await execAsync(`git checkout -b ${targetBranch} origin/${defaultBranch}`, {
             cwd: projectPath
           });
         } else {
@@ -635,6 +702,13 @@ export class GitService {
     this.logger.log('Attempting repository recovery...');
     
     try {
+      // Check if directory exists first
+      const fs = require('fs');
+      if (!fs.existsSync(projectPath)) {
+        this.logger.warn(`Repository path does not exist: ${projectPath}`);
+        return;
+      }
+      
       // Check if we're in the middle of a merge/rebase
       const { stdout: gitDir } = await execAsync('git rev-parse --git-dir', {
         cwd: projectPath

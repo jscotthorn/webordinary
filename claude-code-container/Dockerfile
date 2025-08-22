@@ -21,13 +21,17 @@ RUN npm run build
 # Runtime stage
 FROM node:20-slim
 
-# Install system dependencies
+# Install system dependencies  
 RUN apt-get update && apt-get install -y \
     git \
     curl \
     ca-certificates \
     unzip \
+    bash \
     && rm -rf /var/lib/apt/lists/*
+
+# Copy bash to sh to ensure it's always available
+RUN cp /bin/bash /bin/sh
 
 # Install AWS CLI v2 (multi-arch support)
 RUN ARCH=$(dpkg --print-architecture) && \
@@ -40,8 +44,14 @@ RUN ARCH=$(dpkg --print-architecture) && \
     ./aws/install && \
     rm -rf awscliv2.zip aws/
 
-# Claude Code SDK will be installed via npm dependencies
-# No need for global CLI installation
+# Install Claude Code SDK globally (following official devcontainer approach)
+ENV NPM_CONFIG_PREFIX=/usr/local/share/npm-global
+ENV PATH=$PATH:/usr/local/share/npm-global/bin
+RUN mkdir -p /usr/local/share/npm-global && \
+    npm install -g @anthropic-ai/claude-code@latest && \
+    # Ensure node is available in standard locations
+    ln -sf /usr/local/bin/node /usr/bin/node && \
+    ln -sf /usr/local/bin/npm /usr/bin/npm
 
 # Create app user for security
 RUN useradd -m -s /bin/bash appuser && \
@@ -49,8 +59,8 @@ RUN useradd -m -s /bin/bash appuser && \
 
 # Set up directories with proper ownership
 WORKDIR /app
-RUN mkdir -p /workspace /tmp/claude && \
-    chown -R appuser:appuser /app /workspace /tmp/claude
+RUN mkdir -p /workspace /tmp/claude /home/appuser/.claude && \
+    chown -R appuser:appuser /app /workspace /tmp/claude /home/appuser/.claude /usr/local/share/npm-global
 
 # Copy built application from builder stage
 COPY --from=builder /app/dist ./dist
@@ -77,7 +87,10 @@ ENV NODE_ENV=production \
     CLAUDE_CODE_NON_INTERACTIVE=true \
     ASTRO_TELEMETRY_DISABLED=1 \
     CLAUDE_CODE_USE_BEDROCK=1 \
-    AWS_REGION=us-west-2
+    AWS_REGION=us-west-2 \
+    SHELL=/bin/bash \
+    NODE_OPTIONS="--max-old-space-size=4096" \
+    CLAUDE_CONFIG_DIR="/home/appuser/.claude"
 
 # Add helpful labels
 LABEL maintainer="Webordinary <support@webordinary.com>"
