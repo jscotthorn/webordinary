@@ -55,25 +55,6 @@ Everything runs locally with LocalStack:
 Email → S3 → Lambda → Step Functions → Container → S3 → User
 ```
 
-### What's Included
-- **LocalStack**: Mocks AWS services locally
-  - S3 buckets with event triggers
-  - Lambda function runtime
-  - SQS queues (FIFO and standard)
-  - DynamoDB tables
-  - Step Functions (coming in Sprint 3)
-- **Lambda Functions**:
-  - `intake-lambda`: Processes emails from S3
-  - `process-attachment-lambda`: Optimizes images with Sharp
-- **Claude Code Container**: Runs locally or in Docker
-
-### LocalStack Endpoints
-All AWS services are available at `http://localhost:4566`:
-- S3: `aws --endpoint-url=http://localhost:4566 s3 ls`
-- Lambda: `aws --endpoint-url=http://localhost:4566 lambda list-functions`
-- SQS: `aws --endpoint-url=http://localhost:4566 sqs list-queues`
-- DynamoDB: `aws --endpoint-url=http://localhost:4566 dynamodb list-tables`
-
 **Important**: Use test credentials for LocalStack:
 ```bash
 export AWS_ACCESS_KEY_ID=test
@@ -85,37 +66,6 @@ export AWS_SECRET_ACCESS_KEY=test
 - Node.js 20+ (`brew install node`)
 - AWS CLI (`brew install awscli`)
 - No AWS credentials needed (LocalStack uses test credentials)
-
-### Lambda Functions
-
-#### intake-lambda
-- **Location**: `/hephaestus/lambdas/intake-lambda/`
-- **Purpose**: Process incoming emails from S3
-- **Trigger**: S3 ObjectCreated events on `emails/` prefix
-- **Actions**:
-  - Parses email using mailparser
-  - Extracts thread ID, project, and user
-  - Starts Step Functions execution
-
-#### process-attachment-lambda  
-- **Location**: `/hephaestus/lambdas/process-attachment-lambda/`
-- **Purpose**: Optimize email attachments
-- **Features**:
-  - Creates WebP versions for modern browsers
-  - Generates thumbnails (400px max)
-  - Creates web-optimized versions (1200px max)
-  - Uses Sharp for image processing (requires container deployment in production)
-  - Simplified JavaScript version for local testing
-
-#### Support Lambda Functions (Stubs)
-The following Lambda functions are automatically created as stubs by `start-local.sh`:
-- **check-active-job-lambda**: Checks for active jobs in DynamoDB
-- **rate-limited-claim-lambda**: Claims a job with rate limiting
-- **send-interrupt-lambda**: Sends interrupt messages
-- **record-interruption-lambda**: Records interruption events
-- **handle-timeout-lambda**: Handles Step Functions timeouts
-
-These stubs will be replaced with full implementations in Sprint 2 Day 6-7.
 
 ### Building and Deploying Lambdas
 

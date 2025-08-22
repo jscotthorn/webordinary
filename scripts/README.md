@@ -1,123 +1,155 @@
 # WebOrdinary Scripts
 
-Scripts for testing and managing the WebOrdinary E2E flow.
+A collection of scripts for managing WebOrdinary infrastructure, testing, and local development.
 
-## Local Claude Container Management
+## Infrastructure Management
+
+### `scale-up.sh` / `scale-down.sh`
+**Purpose:** Manage AWS ECS service capacity for cost optimization
+- `scale-up.sh` - Scales ECS services to 1 instance for development/testing
+- `scale-down.sh` - Scales ECS services to 0 instances to save costs (~$45-50/month)
+- Both scripts use the `personal` AWS profile and target `us-west-2` region
+
+## Local Development Environment
+
+### `start-local.sh`
+**Purpose:** Complete local development environment with LocalStack
+- Starts LocalStack container with AWS service mocks
+- Creates S3 buckets, DynamoDB tables, SQS queues
+- Deploys Lambda functions from `/hephaestus/lambdas/`
+- Configures Step Functions state machine
+- Optionally starts Claude Code Container locally
+- **Options:**
+  - `--no-claude` - Skip starting Claude container
+  - `--clean` - Clean build (clear LocalStack data)
+  - `--verbose` - Show detailed output
+
+### `stop-local.sh`
+**Purpose:** Stops all local development services
+- Stops Claude process if running
+- Stops and removes LocalStack container
+- Cleans up legacy containers
+
+## Claude Container Management
 
 ### `start-local-claude.sh`
-Starts a local Claude container that integrates with the E2E message flow.
-
-```bash
-# Start with default image (final-fix)
-./scripts/start-local-claude.sh
-
-# Build and start with local changes
-./scripts/start-local-claude.sh --build
-```
-
-The container will:
-- Poll the unclaimed queue for work
-- Process messages from Step Functions
-- Execute Claude via AWS Bedrock
-- Push changes to GitHub
-- Deploy to S3
-
-**Requirements:**
-- AWS credentials configured in `[personal]` profile
-- `GITHUB_TOKEN` with write permissions to `jscotthorn/amelia-astro`
-- Docker installed and running
+**Purpose:** Starts Claude container connected to AWS production queues
+- Polls the unclaimed queue for work
+- Processes messages from Step Functions
+- Uses AWS Bedrock for Claude API
+- Pushes changes to GitHub
+- Deploys to S3
+- **Options:**
+  - `--build` - Build container locally before starting
 
 ### `stop-local-claude.sh`
-Stops and removes the local Claude container.
-
-```bash
-./scripts/stop-local-claude.sh
-```
-
-Shows container stats and recent logs before stopping.
+**Purpose:** Stops the local Claude container
+- Shows container statistics before stopping
+- Displays recent logs
+- Checks for active jobs in DynamoDB
+- Removes container completely
 
 ## Testing Scripts
 
+### `test-email.sh`
+**Purpose:** Test email processing through LocalStack pipeline
+- Sends test email to LocalStack S3
+- Triggers Lambda and Step Functions locally
+- **Options:**
+  - `--with-attachment` - Include mock attachment in email
+  - `--interrupt` - Test interrupt scenario
+  - `--verbose` - Show detailed output
+
 ### `test-aws-email.sh`
-Sends a test email directly to S3 to trigger the full E2E flow.
+**Purpose:** Test email directly against AWS production
+- Uploads email to production S3 bucket
+- Triggers production Step Functions
+- Monitors execution status
+- Used for testing production flow with local container
 
+## Testing Workflows
+
+### Local Development (with LocalStack)
 ```bash
+# Start everything locally
+./scripts/start-local.sh
+
+# Send test email
+./scripts/test-email.sh
+
+# Monitor logs
+docker logs -f localstack-main
+
+# Stop everything
+./scripts/stop-local.sh
+```
+
+### Production Testing (with local container)
+```bash
+# Start local container connected to AWS
+./scripts/start-local-claude.sh
+
+# Send test email to AWS
 ./scripts/test-aws-email.sh
+
+# Monitor container
+docker logs -f claude-local-e2e
+
+# Stop container
+./scripts/stop-local-claude.sh
 ```
 
-This will:
-1. Upload an email to S3
-2. Trigger Lambda function
-3. Start Step Functions execution
-4. Send message to container via SQS
+## Environment Requirements
 
-### `test-bedrock-e2e.sh`
-Tests Claude container with Bedrock integration.
+### Required Environment Variables
+- `AWS_PROFILE` - AWS profile (usually `personal`)
+- `GITHUB_TOKEN` - GitHub PAT with write permissions
+- `AWS_REGION` - AWS region (default: `us-west-2`)
 
+### Required Tools
+- Docker Desktop
+- AWS CLI configured with `personal` profile
+- Node.js and npm
+- Git
+
+## Common Issues & Solutions
+
+### Container won't start
 ```bash
-# Test with direct SQS message
-./scripts/test-bedrock-e2e.sh
+# Check for existing containers
+docker ps | grep claude
 
-# Test with full email flow
-./scripts/test-bedrock-e2e.sh --full
+# Clean up old containers
+docker stop $(docker ps -aq) 2>/dev/null
+docker rm $(docker ps -aq) 2>/dev/null
 ```
 
-## Full E2E Testing Workflow
+### LocalStack issues
+```bash
+# Clean rebuild
+./scripts/start-local.sh --clean
 
-1. **Start the local container:**
-   ```bash
-   ./scripts/start-local-claude.sh
-   ```
+# Check LocalStack health
+curl http://localhost:4566/_localstack/health
+```
 
-2. **Send a test email:**
-   ```bash
-   ./scripts/test-aws-email.sh
-   ```
+### AWS credentials issues
+```bash
+# Verify credentials
+aws configure list --profile personal
 
-3. **Monitor the flow:**
-   ```bash
-   # Watch container logs
-   docker logs -f claude-local-e2e
-   
-   # Check Step Functions
-   AWS_PROFILE=personal aws stepfunctions list-executions \
-     --state-machine-arn arn:aws:states:us-west-2:942734823970:stateMachine:email-processor \
-     --max-items 1
-   
-   # Check GitHub for new branch
-   open https://github.com/jscotthorn/amelia-astro/branches
-   ```
+# Test AWS access
+AWS_PROFILE=personal aws s3 ls
+```
 
-4. **Stop the container:**
-   ```bash
-   ./scripts/stop-local-claude.sh
-   ```
+## Cost Management
 
-## Environment Variables
-
-The scripts use these environment variables:
-- `GITHUB_TOKEN`: GitHub personal access token with write permissions
-- `AWS_PROFILE`: Set to `personal` for AWS operations
-- `WORKSPACE_PATH`: Container workspace (default: `/workspace`)
+- Use `scale-down.sh` when not actively developing
+- Stop local containers when not in use
+- Monitor AWS costs in CloudWatch
 
 ## Docker Images
 
-- `webordinary/claude-code-container:final-fix` - Latest stable version with all fixes
-- `webordinary/claude-code-container:local` - Built locally with `--build` flag
-
-## Troubleshooting
-
-### Container won't start
-- Check if another container is already running: `docker ps | grep claude`
-- Ensure AWS credentials are configured: `aws configure list --profile personal`
-- Verify GitHub token: `echo $GITHUB_TOKEN`
-
-### Messages not processing
-- Check container logs: `docker logs claude-local-e2e`
-- Verify Step Functions execution: Check AWS Console or CLI
-- Ensure SQS queues exist: Check AWS Console
-
-### GitHub push failing
-- Verify token has write permissions
-- Check if branch already exists
-- Ensure repository URL is correct
+- `webordinary/claude-code-container:final-fix` - Stable production version
+- `webordinary/claude-code-container:local` - Built locally with `--build`
+- `localstack/localstack:latest` - LocalStack for AWS mocking
